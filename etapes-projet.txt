@@ -1,0 +1,501 @@
+================================================================================
+PROJET COMPILATION LISP VERS ASM - ÉTAPES ET SPÉCIFICATIONS
+================================================================================
+
+OBJECTIF :
+- Générateur de code LISP vers ASM
+- Machine virtuelle (VM) qui interprète le fichier ASM produit
+
+EXEMPLE D'UTILISATION :
+1. Compiler la fonction fibo écrite en LISP
+2. Charger ce code dans la VM
+3. Compiler un appel à la fonction fibo, par exemple (fibo 10)
+4. Charger ce code dans la VM
+5. Lancer l'exécution de ce code
+
+================================================================================
+PHASE 1 : CONCEPTION DE L'ARCHITECTURE
+================================================================================
+
+ÉTAPE 1 : DÉFINIR LE LANGAGE D'ASSEMBLAGE CIBLE
+------------------------------------------------
+- Choisir le jeu d'instructions (pile, registres, etc.)
+- Définir le format des instructions (opcode, opérandes)
+- Documenter chaque instruction
+
+Instructions essentielles à prévoir :
+
+# Manipulation de la Pile
+PUSH <valeur>           ; Empiler une valeur
+POP                     ; Dépiler
+DUP                     ; Dupliquer le sommet de la pile
+
+# Opérations Arithmétiques
+ADD                     ; Addition
+SUB                     ; Soustraction
+MUL                     ; Multiplication
+DIV                     ; Division
+MOD                     ; Modulo
+
+# Opérations de Comparaison
+EQ                      ; Égalité
+LT                      ; Inférieur
+LE                      ; Inférieur ou égal
+GT                      ; Supérieur
+GE                      ; Supérieur ou égal
+
+# Contrôle de Flux
+JUMP <label>            ; Saut inconditionnel
+JUMPIF <label>          ; Saut si vrai (sommet de pile)
+JUMPNIF <label>         ; Saut si faux
+CALL <fonction>         ; Appel de fonction
+RET                     ; Retour de fonction
+HALT                    ; Arrêt de la VM
+
+# Gestion Mémoire/Variables
+LOAD <var>              ; Charger une variable
+STORE <var>             ; Sauvegarder dans une variable
+LOADARG <n>             ; Charger l'argument n
+STOREARG <n>            ; Sauvegarder l'argument n
+ALLOC <n>               ; Allouer n cellules locales
+DEALLOC <n>             ; Désallouer n cellules
+
+# Gestion des Fermetures
+MKCLOSURE <fonction> <n-vars>  ; Créer une fermeture
+LOADCLOSURE <n>                ; Charger variable de fermeture
+STORECLOSURE <n>               ; Sauvegarder dans fermeture
+
+# Utilitaires
+NOP                     ; Pas d'opération
+PRINT                   ; Afficher le sommet de la pile (debug)
+
+================================================================================
+PHASE 2 : MACHINE VIRTUELLE (VM)
+================================================================================
+
+ÉTAPE 2 : IMPLÉMENTER LA VM DE BASE
+------------------------------------
+Structure de données de la VM :
+
+(defstruct vm
+  (code #())           ; Tableau d'instructions (bytecode)
+  (pc 0)               ; Program Counter (pointeur d'instruction)
+  (stack '())          ; Pile d'exécution
+  (env '())            ; Environnement (variables globales/locales)
+  (call-stack '())     ; Pile d'appels (pour les fonctions)
+  (heap '())           ; Tas (pour les fermetures)
+  (halt nil))          ; Flag d'arrêt
+
+ÉTAPE 3 : BOUCLE D'EXÉCUTION (FETCH-DECODE-EXECUTE)
+----------------------------------------------------
+1. FETCH : Lire l'instruction à l'adresse PC
+2. DECODE : Analyser l'instruction (opcode + opérandes)
+3. EXECUTE : Exécuter l'instruction
+4. Incrémenter le PC (sauf pour JUMP/CALL/RET)
+5. Répéter jusqu'à HALT ou erreur
+
+Gestion des erreurs :
+- Stack underflow (pas assez d'éléments)
+- Stack overflow (trop d'éléments)
+- Division par zéro
+- Adresse invalide
+- Instruction inconnue
+
+================================================================================
+PHASE 3 : CHARGEUR (LOADER)
+================================================================================
+
+ÉTAPE 4 : PARSER DE FICHIER ASM
+--------------------------------
+Fonctionnalités :
+- Lire le fichier .asm ligne par ligne
+- Ignorer les commentaires (lignes commençant par ;)
+- Convertir les mnémoniques en opcodes numériques
+- Résoudre les labels → adresses
+- Produire un bytecode exécutable par la VM
+
+Format du fichier ASM :
+label:
+    INSTRUCTION operand
+    INSTRUCTION operand
+    ...
+
+ÉTAPE 5 : GESTION DES SYMBOLES
+-------------------------------
+Tables à maintenir :
+- Table des labels → adresses
+- Table des fonctions → adresses de début
+- Table des constantes
+- Table des symboles (variables globales)
+
+================================================================================
+PHASE 4 : COMPILATEUR LISP → ASM
+================================================================================
+
+ÉTAPE 6 : ANALYSEUR SYNTAXIQUE (PARSER)
+----------------------------------------
+- Parser les S-expressions LISP
+- Construire un AST (Arbre Syntaxique Abstrait)
+- Validation syntaxique
+
+ÉTAPE 7 : COMPILATION DES EXPRESSIONS DE BASE
+----------------------------------------------
+Nombres :
+    42 → PUSH 42
+
+Variables :
+    x → LOAD x
+
+Opérations arithmétiques :
+    (+ a b) →
+        <compile a>
+        <compile b>
+        ADD
+
+    (- a b) →
+        <compile a>
+        <compile b>
+        SUB
+
+Appels de fonction :
+    (f x y) →
+        <compile y>
+        <compile x>
+        CALL f
+
+ÉTAPE 8 : COMPILATION DES STRUCTURES DE CONTRÔLE
+-------------------------------------------------
+
+IF :
+    (if test then else) →
+        <compile test>
+        JUMPNIF label_else
+        <compile then>
+        JUMP label_end
+    label_else:
+        <compile else>
+    label_end:
+
+LET :
+    (let ((x 1) (y 2)) body) →
+        ALLOC 2
+        PUSH 1
+        STORE x
+        PUSH 2
+        STORE y
+        <compile body>
+        DEALLOC 2
+
+LOOP :
+    (loop while test do body) →
+    label_start:
+        <compile test>
+        JUMPNIF label_end
+        <compile body>
+        JUMP label_start
+    label_end:
+
+COND/SELECT :
+    (cond
+      (test1 expr1)
+      (test2 expr2)
+      (t expr3)) →
+        <compile test1>
+        JUMPNIF label_2
+        <compile expr1>
+        JUMP label_end
+    label_2:
+        <compile test2>
+        JUMPNIF label_3
+        <compile expr2>
+        JUMP label_end
+    label_3:
+        <compile expr3>
+    label_end:
+
+ÉTAPE 9 : COMPILATION DES FONCTIONS
+------------------------------------
+(defun nom (param1 param2) body) →
+    fonction_nom:
+        ; Prologue
+        ALLOC n_locals
+        ; Corps
+        <compile body>
+        ; Épilogue
+        DEALLOC n_locals
+        RET
+
+Convention d'appel :
+- Les arguments sont empilés dans l'ordre inverse
+- La fonction accède aux arguments via LOADARG
+- Le résultat est laissé au sommet de la pile
+
+ÉTAPE 10 : GESTION DE LA RÉCURSIVITÉ
+-------------------------------------
+Exemple fibonacci :
+    (defun fibo (n)
+      (if (<= n 1)
+          n
+          (+ (fibo (- n 1))
+             (fibo (- n 2)))))
+
+Compilation →
+    fibo:
+        LOADARG 0           ; Charger n
+        PUSH 1
+        LE                  ; n <= 1 ?
+        JUMPNIF fibo_else
+        LOADARG 0           ; Retourner n
+        RET
+    fibo_else:
+        LOADARG 0           ; Calculer fibo(n-1)
+        PUSH 1
+        SUB
+        CALL fibo
+        
+        LOADARG 0           ; Calculer fibo(n-2)
+        PUSH 2
+        SUB
+        CALL fibo
+        
+        ADD                 ; Additionner les résultats
+        RET
+
+Gestion de la pile d'appels :
+- Sauvegarder PC avant CALL
+- Sauvegarder l'environnement local
+- Restaurer après RET
+
+ÉTAPE 11 : FERMETURES (CLOSURES)
+---------------------------------
+Une fermeture capture son environnement lexical.
+
+Exemple :
+    (let ((x 10))
+      (lambda (y) (+ x y)))
+
+Compilation :
+    PUSH 10
+    STORE x
+    MKCLOSURE lambda_1 1    ; Capturer 1 variable (x)
+    
+lambda_1:
+    LOADCLOSURE 0           ; Charger x de la fermeture
+    LOADARG 0               ; Charger y
+    ADD
+    RET
+
+Structure d'une fermeture :
+- Pointeur vers le code de la fonction
+- Environnement capturé (variables)
+
+ÉTAPE 12 : FONCTIONS LOCALES (LABELS)
+--------------------------------------
+(labels ((f (x) (+ x 1))
+         (g (y) (* y 2)))
+  (f (g 5))) →
+  
+Compilation :
+    JUMP main
+    
+f:
+    LOADARG 0
+    PUSH 1
+    ADD
+    RET
+    
+g:
+    LOADARG 0
+    PUSH 2
+    MUL
+    RET
+    
+main:
+    PUSH 5
+    CALL g
+    CALL f
+    RET
+
+Portée lexicale :
+- Les fonctions locales peuvent accéder aux variables de la fonction englobante
+- Utiliser des fermetures si nécessaire
+
+================================================================================
+PHASE 5 : TESTS ET VALIDATION
+================================================================================
+
+ÉTAPE 13 : TESTS UNITAIRES
+---------------------------
+Tests pour chaque instruction de la VM :
+- PUSH/POP
+- ADD/SUB/MUL/DIV
+- JUMP/JUMPIF
+- CALL/RET
+- LOAD/STORE
+- etc.
+
+Tests pour chaque construction LISP :
+- Nombres, variables
+- Opérations arithmétiques
+- IF, LET, LOOP
+- Fonctions simples
+- Récursivité
+- Fermetures
+
+ÉTAPE 14 : TESTS D'INTÉGRATION
+-------------------------------
+Tests complets :
+
+1. Fibonacci :
+   (defun fibo (n)
+     (if (<= n 1)
+         n
+         (+ (fibo (- n 1))
+            (fibo (- n 2)))))
+   
+   Test : (fibo 10) → 55
+
+2. Factorielle :
+   (defun fact (n)
+     (if (<= n 1)
+         1
+         (* n (fact (- n 1)))))
+   
+   Test : (fact 5) → 120
+
+3. Map avec fermeture :
+   (defun map-add (n lst)
+     (labels ((add-n (x) (+ x n)))
+       (mapcar #'add-n lst)))
+
+4. Compteur avec fermeture :
+   (let ((count 0))
+     (lambda () (setq count (+ count 1))))
+
+================================================================================
+ORDRE DE DÉVELOPPEMENT RECOMMANDÉ
+================================================================================
+
+1.  VM SIMPLE
+    - Implémenter PUSH, POP, ADD, SUB, HALT
+    - Boucle d'exécution de base
+    - Test : (+ 2 3) → 5
+
+2.  LOADER BASIQUE
+    - Parser instructions simples (sans labels)
+    - Charger dans la VM
+    - Test : fichier ASM simple
+
+3.  COMPILATEUR ARITHMÉTIQUE
+    - Compiler nombres et opérations (+, -, *, /)
+    - Test : (+ (* 2 3) 4) → 10
+
+4.  IF ET JUMP
+    - Implémenter JUMPIF, JUMPNIF, JUMP
+    - Compiler IF
+    - Gestion des labels dans le loader
+    - Test : (if (< 2 3) 10 20) → 10
+
+5.  VARIABLES ET LET
+    - Implémenter LOAD, STORE, ALLOC, DEALLOC
+    - Compiler LET
+    - Gestion de l'environnement
+    - Test : (let ((x 5)) (* x 2)) → 10
+
+6.  FONCTIONS SIMPLES (NON-RÉCURSIVES)
+    - Implémenter CALL, RET
+    - Compiler DEFUN
+    - Pile d'appels
+    - Test : (defun double (x) (* x 2)) (double 5) → 10
+
+7.  RÉCURSIVITÉ
+    - Sauvegarder/restaurer contexte
+    - Test : fibonacci, factorielle
+
+8.  LABELS (fonctions locales)
+    - Portée lexicale
+    - Test : fonctions locales imbriquées
+
+9.  FERMETURES
+    - Structure de fermeture
+    - MKCLOSURE, LOADCLOSURE
+    - Test : compteur, map avec fermeture
+
+10. OPTIMISATIONS
+    - Tail-call optimization
+    - Élimination de code mort
+    - Optimisations peephole
+
+================================================================================
+STRUCTURE DES FICHIERS DU PROJET
+================================================================================
+
+projet/
+├── README.md               ; Documentation du projet
+├── instructions.lisp       ; Définition des instructions et opcodes
+├── vm.lisp                 ; Machine virtuelle
+├── loader.lisp             ; Chargeur ASM → bytecode
+├── compiler.lisp           ; Compilateur LISP → ASM
+├── utils.lisp              ; Utilitaires (gensym, tables, etc.)
+├── main.lisp               ; Point d'entrée principal
+├── tests/
+│   ├── test-vm.lisp
+│   ├── test-loader.lisp
+│   ├── test-compiler.lisp
+│   └── exemples/
+│       ├── fibo.lisp
+│       ├── fibo.asm
+│       ├── fact.lisp
+│       ├── fact.asm
+│       ├── closures.lisp
+│       └── closures.asm
+└── docs/
+    ├── architecture.txt
+    ├── jeu-instructions.txt
+    └── exemples-compilation.txt
+
+================================================================================
+FONCTIONNALITÉS À COMPILER
+================================================================================
+
+✓ Fonctions récursives en LISP
+✓ Structures de contrôle LISP :
+  - LET (variables locales et portée)
+  - IF (conditionnelles)
+  - LOOP (boucles)
+  - COND/SELECT (sélection multiple)
+✓ Gestion des paramètres et variables locales
+✓ Fonctions locales (LABELS)
+✓ Fermetures (CLOSURES)
+
+================================================================================
+CONSEILS DE DÉVELOPPEMENT
+================================================================================
+
+1. COMMENCEZ SIMPLE
+   - Implémentez d'abord les fonctionnalités de base
+   - Testez chaque composant isolément
+   - Progressez vers la complexité
+
+2. TESTEZ CONTINUELLEMENT
+   - Écrivez des tests pour chaque nouvelle fonctionnalité
+   - Utilisez des exemples simples d'abord
+
+3. DOCUMENTATION
+   - Documentez vos choix de conception
+   - Commentez le code complexe
+   - Maintenez des exemples à jour
+
+4. DEBUGGING
+   - Implémentez un mode debug pour la VM
+   - Affichez l'état de la pile et du PC
+   - Tracez l'exécution instruction par instruction
+
+5. ARCHITECTURE MODULAIRE
+   - Séparez les composants (VM, loader, compiler)
+   - Définissez des interfaces claires
+   - Facilitez les tests unitaires
+
+================================================================================
+FIN DU DOCUMENT
+================================================================================
