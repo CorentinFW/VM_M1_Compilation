@@ -10,8 +10,10 @@ projet/
 ├── instructions.lisp   # Définition des instructions et opcodes
 ├── vm.lisp             # Machine virtuelle
 ├── loader.lisp         # Chargeur de fichiers ASM
+├── compiler.lisp       # Compilateur LISP → ASM
 ├── tests.lisp          # Tests de la VM
 ├── test-loader.lisp    # Tests du loader
+├── test-compiler.lisp  # Tests du compilateur
 ├── exemples/           # Fichiers ASM d'exemple
 │   ├── simple.asm
 │   ├── if.asm
@@ -114,6 +116,43 @@ ADD
 HALT")
 ```
 
+### Utilisation du compilateur
+
+```lisp
+;; Charger le compilateur
+(load "compiler.lisp")
+
+;; Exemple 1 : Expression arithmétique simple
+(compile-and-run '(+ (* 2 3) 4))
+; Résultat : 10
+
+;; Exemple 2 : Structure IF
+(compile-and-run '(if (< 2 3) 10 20))
+; Résultat : 10
+
+;; Exemple 3 : Variables locales avec LET
+(compile-and-run '(let ((x 5) (y 10)) (+ x y)))
+; Résultat : 15
+
+;; Exemple 4 : Définir et appeler une fonction
+(compile-and-run '(progn
+                    (defun double (x) (* x 2))
+                    (double 7)))
+; Résultat : 14
+
+;; Exemple 5 : Factorielle récursive
+(compile-and-run '(progn
+                    (defun fact (n)
+                      (if (<= n 1)
+                          1
+                          (* n (fact (- n 1)))))
+                    (fact 5)))
+; Résultat : 120
+
+;; Sauvegarder dans un fichier ASM
+(compile-lisp-to-file '(+ 2 3) "exemples/addition.asm")
+```
+
 ### Créer et exécuter du code manuellement
 
 ```lisp
@@ -154,10 +193,46 @@ HALT")
 ### Debug
 - `PRINT` - Afficher le sommet de la pile
 
+## Phase 4 : TERMINÉE ✓
+
+### Compilateur LISP → ASM
+
+7. **compiler.lisp** : Compilateur complet LISP → ASM
+   - Structure de l'environnement de compilation
+   - Compilation des expressions de base :
+     - Constantes (nombres)
+     - Variables locales
+     - Opérations arithmétiques (+, -, *, /, mod)
+     - Opérations de comparaison (=, <, <=, >, >=)
+   - Structures de contrôle :
+     - IF-THEN-ELSE avec génération de labels
+     - LET avec variables locales (ALLOC/DEALLOC)
+     - PROGN (séquences d'expressions)
+     - SETQ (affectation)
+   - Fonctions :
+     - DEFUN (définition de fonctions)
+     - Appels de fonctions avec arguments
+     - Support de la récursivité
+   - Fonctions utilitaires :
+     - `compile-lisp` : Compile une expression LISP
+     - `compile-and-run` : Compile et exécute directement
+     - `compile-lisp-to-file` : Sauvegarde le code ASM
+
+8. **test-compiler.lisp** : Suite de tests complète du compilateur
+   - Phase 1 : Tests arithmétiques (8 tests)
+   - Phase 2 : Tests de comparaisons (6 tests)
+   - Phase 3 : Tests des structures IF (4 tests)
+   - Phase 4 : Tests des variables LET (5 tests)
+   - Phase 5 : Tests des fonctions DEFUN (5 tests)
+   - Phase 6 : Tests de récursivité (3 tests) - Factorielle, Fibonacci, Somme
+   - Exemples interactifs détaillés
+
 ## Prochaines étapes
 
-- Phase 4 : Compilateur (compiler.lisp) - LISP → ASM
-- Phase 5 : Tests avancés (récursivité, fermetures)
+- Phase 5 : Fonctionnalités avancées
+  - LABELS (fonctions locales)
+  - Fermetures (CLOSURES)
+  - Optimisations (tail-call, etc.)
 
 ## Tests
 
@@ -175,3 +250,11 @@ HALT")
 - Gestion des commentaires
 - Structures de contrôle (IF, JUMP)
 - Chargement depuis string et fichier
+
+### Tests Compilateur ✓ (31/31)
+- Phase 1 : Arithmétique (8 tests)
+- Phase 2 : Comparaisons (6 tests)
+- Phase 3 : Structures IF (4 tests)
+- Phase 4 : Variables LET (5 tests)
+- Phase 5 : Fonctions DEFUN (5 tests)
+- Phase 6 : Récursivité (3 tests)

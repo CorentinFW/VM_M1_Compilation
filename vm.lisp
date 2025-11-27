@@ -104,7 +104,7 @@
 (defun vm-call (vm address args)
   "Appelle une fonction à l'adresse donnée avec des arguments"
   (let ((frame (make-call-frame 
-                :return-address (vm-pc vm)
+                :return-address (1+ (vm-pc vm))  ; Sauvegarder PC+1 pour retourner après CALL
                 :args args)))
     (push frame (vm-call-stack vm))
     (setf (vm-pc vm) address)))
@@ -199,7 +199,8 @@
                   (args '()))
               (dotimes (i n-args)
                 (push (vm-pop vm) args))
-              (vm-call vm operand args)
+              ;; Les arguments sont maintenant dans l'ordre inverse, on les remet dans le bon ordre
+              (vm-call vm operand (nreverse args))
               (return-from vm-execute-instruction)))
       (RET (vm-return vm)
            (return-from vm-execute-instruction))

@@ -1,21 +1,63 @@
-; Calcul de fibonacci(5)
-; fibo(0) = 0, fibo(1) = 1
-; fibo(n) = fibo(n-1) + fibo(n-2)
+; ============================================================================
+; FIBONACCI RÉCURSIF EN ASSEMBLEUR
+; ============================================================================
+; Calcule fibonacci(n) où :
+;   fibo(0) = 0
+;   fibo(1) = 1
+;   fibo(n) = fibo(n-1) + fibo(n-2)
 ;
-; Pour cette version simple, on calcule manuellement :
-; fibo(5) = 5
-; On va juste faire une structure IF pour l'instant
+; Ce fichier définit la fonction fibo et l'appelle avec n=7
+; Résultat attendu : fibo(7) = 13
+; ============================================================================
 
-; Calcul : if n <= 1 then n else ...
-PUSH 5          ; n = 5
-DUP
-PUSH 1
-LE              ; n <= 1 ?
-JUMPNIF recursive_case
-; Cas de base : retourner n
-HALT
+JUMP main
 
-recursive_case:
-; Pour l'instant juste un placeholder
-PUSH 5          ; résultat attendu pour fibo(5)
-HALT
+; ----------------------------------------------------------------------------
+; Fonction fibo(n)
+; Arguments : n (via LOADARG 0)
+; Retourne : fibonacci(n)
+; ----------------------------------------------------------------------------
+fibo:
+    ; Charger n et tester si n <= 1
+    LOADARG 0
+    PUSH 1
+    LE
+    JUMPNIF fibo_recursive
+    
+    ; Cas de base : n <= 1, retourner n
+    LOADARG 0
+    RET
+
+fibo_recursive:
+    ; Appel récursif : fibo(n-1)
+    LOADARG 0
+    PUSH 1
+    SUB
+    PUSH 1          ; 1 argument
+    CALL fibo
+    ; À ce stade : fibo(n-1) est au sommet de la pile
+    
+    ; Appel récursif : fibo(n-2)
+    LOADARG 0
+    PUSH 2
+    SUB
+    PUSH 1          ; 1 argument
+    CALL fibo
+    ; À ce stade : pile = [fibo(n-2), fibo(n-1)]
+    
+    ; Additionner les deux résultats
+    ADD
+    RET
+
+; ----------------------------------------------------------------------------
+; Programme principal
+; ----------------------------------------------------------------------------
+main:
+    ; Appeler fibo(7)
+    PUSH 7
+    PUSH 1          ; 1 argument
+    CALL fibo
+    
+    ; Le résultat est maintenant au sommet de la pile
+    PRINT           ; Afficher le résultat pour déboguer
+    HALT
