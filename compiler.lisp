@@ -17,7 +17,9 @@
   (label-counter 0)            ; Compteur pour générer des labels uniques
   (current-function nil)       ; Fonction en cours de compilation
   (depth 0)                    ; Profondeur de la pile locale
-  (in-function nil))           ; Indique si on compile dans une fonction (pour LOADARG)
+  (in-function nil)            ; Indique si on compile dans une fonction (pour LOADARG)
+  (n-params 0)                 ; Nombre de paramètres de la fonction courante
+  (closure-vars '()))          ; Variables capturées dans une fermeture ((nom . index) ...)
 
 ;;; ----------------------------------------------------------------------------
 ;;; Génération de labels uniques
@@ -61,13 +63,23 @@
     
     ;; Variable
     ((symbolp expr)
-     (let ((index (env-lookup-var env expr)))
-       (if index
-           ;; Si on est dans une fonction, utiliser LOADARG pour les paramètres
-           (if (compiler-env-in-function env)
-               (list (format nil "LOADARG ~A" index))
-               (list (format nil "LOAD ~A" index)))
-           (error "Variable non définie: ~A" expr))))
+     (let ((closure-index (cdr (assoc expr (compiler-env-closure-vars env)))))
+       (if closure-index
+           ;; Variable capturée - utiliser LOADCLOSURE
+           (list (format nil "LOADCLOSURE ~A" closure-index))
+           ;; Variable normale
+           (let ((index (env-lookup-var env expr)))
+             (if index
+                 ;; Distinguer entre paramètres (LOADARG) et variables locales (LOAD)
+                 (if (and (compiler-env-in-function env) 
+                          (< index (compiler-env-n-params env)))
+                     ;; C'est un paramètre → LOADARG
+                     (list (format nil "LOADARG ~A" index))
+                     ;; C'est une variable locale → LOAD (ajuster l'index)
+                     (if (compiler-env-in-function env)
+                         (list (format nil "LOAD ~A" (1+ (- index (compiler-env-n-params env)))))
+                         (list (format nil "LOAD ~A" index))))
+                 (error "Variable non définie: ~A" expr))))))
     
     ;; Liste (appel de fonction ou forme spéciale)
     ((listp expr)
@@ -83,6 +95,14 @@
        ;; Opérations de comparaison
        ((member (car expr) '(= < <= > >=))
         (compile-comparison expr env))
+       
+       ;; Opérations sur les listes
+       ((member (car expr) '(cons car cdr null list))
+        (compile-list-op expr env))
+       
+       ;; Prédicats
+       ((member (car expr) '(null? listp symbolp eq))
+        (compile-predicate expr env))
        
        ;; Structure IF
        ((eq (car expr) 'if)
@@ -103,6 +123,10 @@
        ;; DEFUN (définition de fonction)
        ((eq (car expr) 'defun)
         (compile-defun expr env))
+       
+       ;; LAMBDA (fonction anonyme / fermeture)
+       ((eq (car expr) 'lambda)
+        (compile-lambda expr env))
        
        ;; Appel de fonction
        (t (compile-call expr env))))
@@ -179,6 +203,84 @@
     (> "GT")
     (>= "GE")
     (t (error "Opérateur de comparaison inconnu: ~A" op))))
+
+;;; ----------------------------------------------------------------------------
+;;; ÉTAPE 8 : Compilation de IF
+;;; ----------------------------------------------------------------------------
+
+(defun compile-list-op (expr env)
+  "Compile une opération sur les listes: (cons, car, cdr, null, list)"
+  (let ((op (car expr))
+        (args (cdr expr)))
+    (case op
+      (cons
+       (unless (= (length args) 2)
+         (error "CONS nécessite exactement 2 arguments"))
+       (append (compile-expr (car args) env)
+               (compile-expr (cadr args) env)
+               (list "CONS")))
+      
+      (car
+       (unless (= (length args) 1)
+         (error "CAR nécessite exactement 1 argument"))
+       (append (compile-expr (car args) env)
+               (list "CAR")))
+      
+      (cdr
+       (unless (= (length args) 1)
+         (error "CDR nécessite exactement 1 argument"))
+       (append (compile-expr (car args) env)
+               (list "CDR")))
+      
+      (null
+       (unless (= (length args) 1)
+         (error "NULL nécessite exactement 1 argument"))
+       (append (compile-expr (car args) env)
+               (list "NULLP")))
+      
+      (list
+       ;; (list a b c) → (cons a (cons b (cons c nil)))
+       (if (null args)
+           (list "PUSH 0")  ; Liste vide représentée par 0 (NIL)
+           (let ((result (compile-expr (car (last args)) env)))
+             (setf result (append result (list "PUSH 0" "CONS")))
+             (dolist (arg (reverse (butlast args)))
+               (setf result (append (compile-expr arg env) result (list "CONS"))))
+             result)))
+      
+      (t (error "Opération de liste non supportée: ~A" op)))))
+
+(defun compile-predicate (expr env)
+  "Compile un prédicat: (null?, listp, symbolp, eq)"
+  (let ((op (car expr))
+        (args (cdr expr)))
+    (case op
+      (null?
+       (unless (= (length args) 1)
+         (error "NULL? nécessite exactement 1 argument"))
+       (append (compile-expr (car args) env)
+               (list "NULLP")))
+      
+      (listp
+       (unless (= (length args) 1)
+         (error "LISTP nécessite exactement 1 argument"))
+       (append (compile-expr (car args) env)
+               (list "LISTP")))
+      
+      (symbolp
+       (unless (= (length args) 1)
+         (error "SYMBOLP nécessite exactement 1 argument"))
+       (append (compile-expr (car args) env)
+               (list "SYMBOLP")))
+      
+      (eq
+       (unless (= (length args) 2)
+         (error "EQ nécessite exactement 2 arguments"))
+       (append (compile-expr (car args) env)
+               (compile-expr (cadr args) env)
+               (list "EQSYM")))
+      
+      (t (error "Prédicat non supporté: ~A" op)))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; ÉTAPE 8 : Compilation de IF
@@ -267,11 +369,26 @@
   "Compile une affectation SETQ: (setq var value)"
   (let ((var-name (cadr expr))
         (value (caddr expr)))
-    (let ((index (env-lookup-var env var-name)))
-      (unless index
-        (error "Variable non définie: ~A" var-name))
-      (append (compile-expr value env)
-              (list (format nil "STORE ~A" index))))))
+    (let ((closure-index (cdr (assoc var-name (compiler-env-closure-vars env))))
+          (var-index (env-lookup-var env var-name)))
+      (cond
+        (closure-index
+         ;; Variable capturée dans une closure → STORECLOSURE
+         (append (compile-expr value env)
+                 (list (format nil "STORECLOSURE ~A" closure-index))))
+        (var-index
+         ;; Variable normale → STORE avec index ajusté
+         (append (compile-expr value env)
+                 (if (and (compiler-env-in-function env)
+                          (< var-index (compiler-env-n-params env)))
+                     ;; Paramètre - erreur car on ne peut pas modifier un paramètre avec STORE
+                     (error "Impossible de modifier un paramètre avec setq: ~A" var-name)
+                     ;; Variable locale
+                     (if (compiler-env-in-function env)
+                         (list (format nil "STORE ~A" (1+ (- var-index (compiler-env-n-params env)))))
+                         (list (format nil "STORE ~A" var-index))))))
+        (t
+         (error "Variable non définie: ~A" var-name))))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; ÉTAPE 9 : Compilation des fonctions (DEFUN)
@@ -284,7 +401,7 @@
          (body (cdddr expr))
          (func-label (intern (format nil "FUNC_~A" func-name) :cl-user))
          (end-label (generate-label env "END_DEFUN"))
-         (new-env (make-compiler-env :in-function t)))  ; Activer le mode fonction
+         (new-env (make-compiler-env :in-function t :n-params (length params))))  ; Activer le mode fonction ET spécifier le nombre de paramètres
     
     ;; Enregistrer la fonction dans l'environnement AVANT de compiler le corps
     ;; pour supporter la récursivité
@@ -323,29 +440,155 @@
     result))
 
 ;;; ----------------------------------------------------------------------------
+;;; Compilation de LAMBDA (fermetures)
+;;; ----------------------------------------------------------------------------
+
+(defun compile-lambda (expr env)
+  "Compile une fonction lambda (fermeture): (lambda (params...) body...)"
+  (let* ((params (cadr expr))
+         (body (cddr expr))
+         (lambda-label (generate-label env "LAMBDA"))
+         (end-label (generate-label env "END_LAMBDA"))
+         (new-env (make-compiler-env :in-function t
+                                     :n-params (length params)
+                                     :label-counter (compiler-env-label-counter env))))
+    
+    ;; Partager le compteur de labels
+    (setf (compiler-env-label-counter env) (compiler-env-label-counter new-env))
+    
+    ;; Copier les fonctions définies dans le nouvel environnement
+    (maphash (lambda (k v) 
+               (setf (gethash k (compiler-env-functions new-env)) v))
+             (compiler-env-functions env))
+    
+    ;; Les paramètres sont accessibles via LOADARG
+    (let ((param-index 0))
+      (dolist (param params)
+        (push (cons param param-index) (compiler-env-variables new-env))
+        (incf param-index)))
+    
+    ;; Identifier les variables libres (qui doivent être capturées)
+    (let ((free-vars (find-free-variables body params (compiler-env-variables env))))
+      (append
+       ;; Sauter par-dessus la définition de lambda
+       (list (format nil "JUMP ~A" end-label))
+       ;; Label de la fonction lambda
+       (list (format nil "~A:" lambda-label))
+       ;; Corps de la lambda (les variables capturées sont accessibles via LOADCLOSURE)
+       (compile-lambda-body body new-env free-vars)
+       ;; Retour de fonction
+       (list "RET")
+       ;; Label de fin
+       (list (format nil "~A:" end-label))
+       ;; Capturer les variables libres sur la pile
+       (compile-capture-vars free-vars env)
+       ;; Nombre de variables capturées
+       (list (format nil "PUSH ~A" (length free-vars)))
+       ;; Créer la fermeture
+       (list (format nil "MKCLOSURE ~A" lambda-label))))))
+
+(defun find-free-variables (body params env-vars)
+  "Trouve les variables libres dans le corps d'une lambda (variables non locales).
+   env-vars est la liste des variables de l'environnement englobant ((nom . index) ...)"
+  (let ((free-vars '()))
+    (labels ((collect-vars (expr)
+               (cond
+                 ((symbolp expr)
+                  ;; Si c'est un symbole, vérifier si c'est une variable libre
+                  (when (and (not (member expr params))  ; Pas un paramètre local
+                            (assoc expr env-vars)         ; Existe dans l'env englobant
+                            (not (member expr free-vars))) ; Pas déjà collecté
+                    (push expr free-vars)))
+                 ((listp expr)
+                  ;; Parcourir récursivement, sauf pour les lambdas internes
+                  (unless (and (consp expr) (eq (car expr) 'lambda))
+                    (dolist (sub-expr expr)
+                      (collect-vars sub-expr)))))))
+      (dolist (expr body)
+        (collect-vars expr)))
+    (nreverse free-vars)))
+
+(defun compile-capture-vars (vars env)
+  "Compile le code pour capturer des variables libres"
+  (let ((result '()))
+    (dolist (var vars)
+      ;; Chercher dans les variables ou dans les closures
+      (let ((var-index (env-lookup-var env var))
+            (closure-index (cdr (assoc var (compiler-env-closure-vars env)))))
+        (cond
+          (closure-index
+           ;; Variable déjà capturée dans une fermeture englobante
+           (setf result (append result (list (format nil "LOADCLOSURE ~A" closure-index)))))
+          (var-index
+           ;; Variable normale - distinguer paramètre vs locale
+           (if (and (compiler-env-in-function env)
+                    (< var-index (compiler-env-n-params env)))
+               ;; C'est un paramètre
+               (setf result (append result (list (format nil "LOADARG ~A" var-index))))
+               ;; C'est une variable locale
+               (if (compiler-env-in-function env)
+                   (setf result (append result (list (format nil "LOAD ~A" (1+ (- var-index (compiler-env-n-params env)))))))
+                   (setf result (append result (list (format nil "LOAD ~A" var-index)))))))
+          (t
+           (error "Variable à capturer non trouvée: ~A" var)))))
+    result))
+
+(defun compile-lambda-body (body env free-vars)
+  "Compile le corps d'une lambda avec accès aux variables capturées"
+  ;; Créer un nouvel environnement avec les variables capturées
+  (let ((new-env (copy-compiler-env env)))
+    ;; Ajouter les variables capturées dans closure-vars
+    (let ((closure-index 0))
+      (dolist (var free-vars)
+        (push (cons var closure-index) (compiler-env-closure-vars new-env))
+        (incf closure-index)))
+    
+    ;; Compiler le corps
+    (let ((result '()))
+      (dolist (expr body)
+        (setf result (append result (compile-expr expr new-env))))
+      result)))
+
+;;; ----------------------------------------------------------------------------
 ;;; Compilation d'appels de fonction
 ;;; ----------------------------------------------------------------------------
 
 (defun compile-call (expr env)
-  "Compile un appel de fonction: (func arg1 arg2 ...)"
-  (let ((func-name (car expr))
+  "Compile un appel de fonction: (func arg1 arg2 ...) ou ((lambda ...) arg1 arg2 ...)"
+  (let ((func-expr (car expr))
         (args (cdr expr)))
     
-    ;; Vérifier que la fonction existe
-    (let ((func-label (gethash func-name (compiler-env-functions env))))
-      (unless func-label
-        (error "Fonction non définie: ~A" func-name))
+    (cond
+      ;; Appel direct d'une lambda: ((lambda (x) (* x 2)) 5)
+      ((and (listp func-expr) (eq (car func-expr) 'lambda))
+       (let ((result '()))
+         ;; Compiler les arguments
+         (dolist (arg args)
+           (setf result (append result (compile-expr arg env))))
+         
+         ;; Ajouter le nombre d'arguments sur la pile
+         (setf result (append result (list (format nil "PUSH ~A" (length args)))))
+         
+         ;; Compiler la lambda (qui produit une fermeture sur la pile)
+         (setf result (append result (compile-expr func-expr env)))
+         
+         ;; La fermeture est maintenant au sommet de la pile, appel avec CALLCLOSURE
+         (append result (list "CALLCLOSURE"))))
       
-      ;; Compiler les arguments dans l'ordre inverse (ils seront dépilés dans l'ordre)
-      (let ((result '()))
-        (dolist (arg (reverse args))
-          (setf result (append result (compile-expr arg env))))
-        
-        ;; Ajouter le nombre d'arguments sur la pile
-        (setf result (append result (list (format nil "PUSH ~A" (length args)))))
-        
-        ;; Appeler la fonction
-        (append result (list (format nil "CALL ~A" func-label)))))))
+      ;; Appel d'une fonction nommée
+      ((symbolp func-expr)
+       (let ((func-label (gethash func-expr (compiler-env-functions env))))
+         (unless func-label
+           (error "Fonction non définie: ~A" func-expr))
+         
+         (let ((result '()))
+           (dolist (arg args)
+             (setf result (append result (compile-expr arg env))))
+           (setf result (append result (list (format nil "PUSH ~A" (length args)))))
+           (append result (list (format nil "CALL ~A" func-label))))))
+      
+      ;; Cas non supporté
+      (t (error "Appel de fonction invalide: ~A" expr)))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Fonction principale de compilation
@@ -397,7 +640,9 @@
    :label-counter (compiler-env-label-counter env)
    :current-function (compiler-env-current-function env)
    :depth (compiler-env-depth env)
-   :in-function (compiler-env-in-function env)))
+   :in-function (compiler-env-in-function env)
+   :n-params (compiler-env-n-params env)
+   :closure-vars (copy-list (compiler-env-closure-vars env))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Export des symboles

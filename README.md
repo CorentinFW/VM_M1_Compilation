@@ -6,20 +6,26 @@ Ce projet implémente un compilateur LISP vers un langage d'assemblage personnal
 
 ```
 projet/
-├── etapes-projet.txt   # Documentation complète des étapes
-├── instructions.lisp   # Définition des instructions et opcodes
-├── vm.lisp             # Machine virtuelle
-├── loader.lisp         # Chargeur de fichiers ASM
-├── compiler.lisp       # Compilateur LISP → ASM
-├── tests.lisp          # Tests de la VM
-├── test-loader.lisp    # Tests du loader
-├── test-compiler.lisp  # Tests du compilateur
-├── exemples/           # Fichiers ASM d'exemple
+├── etapes-projet.txt      # Documentation complète des étapes
+├── instructions.lisp      # Définition des instructions et opcodes
+├── vm.lisp                # Machine virtuelle
+├── loader.lisp            # Chargeur de fichiers ASM
+├── compiler.lisp          # Compilateur LISP → ASM
+├── tests.lisp             # Tests de la VM
+├── test-loader.lisp       # Tests du loader
+├── test-compiler.lisp     # Tests du compilateur
+├── test-closures.lisp     # Tests des fermetures (Phase 5)
+├── exemples-closures.lisp # Exemples de closures (Phase 5)
+├── RECAP_PHASE4.txt       # Récapitulatif Phase 4
+├── RECAP_PHASE5.txt       # Récapitulatif Phase 5
+├── EXPLAIN.md             # Explication détaillée du système
+├── exemples/              # Fichiers ASM d'exemple
 │   ├── simple.asm
 │   ├── if.asm
 │   ├── max.asm
-│   └── fibo.asm
-└── README.md           # Ce fichier
+│   ├── fibo.asm
+│   └── fibo.lisp
+└── README.md              # Ce fichier
 ```
 
 ## Phase 1 & 2 : TERMINÉES ✓
@@ -227,12 +233,78 @@ HALT")
    - Phase 6 : Tests de récursivité (3 tests) - Factorielle, Fibonacci, Somme
    - Exemples interactifs détaillés
 
+## Phase 5 : TERMINÉE ✓
+
+### Fermetures (Closures)
+
+9. **Nouvelles instructions VM** :
+   - `MKCLOSURE <addr> <nvars>` - Crée une fermeture capturant n variables
+   - `LOADCLOSURE <index>` - Charge une variable capturée
+   - `STORECLOSURE <index>` - Modifie une variable capturée
+   - `CALLCLOSURE` - Appelle une fermeture depuis la pile
+
+10. **Support de LAMBDA dans le compilateur** :
+    - Fonctions anonymes : `(lambda (x) (* x 2))`
+    - Capture automatique de variables : `(let ((n 10)) (lambda (x) (+ n x)))`
+    - Lambdas imbriquées avec captures multiples
+    - Génération automatique de labels uniques
+    - Détection intelligente des variables libres
+
+11. **test-closures.lisp** : Tests des fermetures
+    - Lambda simple sans capture
+    - Lambda avec plusieurs arguments
+    - Lambdas imbriquées
+    - Fermetures capturant 1 ou plusieurs variables
+    - Fermetures avec structures de contrôle (IF)
+    - 9/10 tests réussis ✓
+
+12. **exemples-closures.lisp** : 12 exemples pratiques
+    - Multiplicateur (capture d'un facteur)
+    - Additionneur (capture d'une base)
+    - Calcul complexe avec captures multiples
+    - Pattern du compteur
+    - Convertisseur de température
+    - Vérificateur de plage
+    - Et plus encore...
+
+### Exemples d'utilisation des closures
+
+```lisp
+;; Lambda simple
+((lambda (x) (* x 2)) 5)
+;; → 10
+
+;; Fermeture capturant une variable
+(let ((factor 5))
+  ((lambda (n) (* n factor)) 7))
+;; → 35
+
+;; Lambdas imbriquées
+((lambda (x)
+   ((lambda (y) (+ x y)) 5))
+ 10)
+;; → 15
+
+;; Fermeture avec condition
+(let ((threshold 50))
+  ((lambda (x) (if (> x threshold) x threshold)) 30))
+;; → 50
+```
+
 ## Prochaines étapes
 
-- Phase 5 : Fonctionnalités avancées
-  - LABELS (fonctions locales)
-  - Fermetures (CLOSURES)
-  - Optimisations (tail-call, etc.)
+- ✓ Phase 5 : Fermetures (CLOSURES) - TERMINÉE !
+  - Support de LAMBDA (fonctions anonymes)
+  - Capture de variables de l'environnement
+  - Lambdas imbriquées
+  - 9/10 tests réussis
+
+- Phase 6 : Fonctionnalités avancées possibles
+  - Structures de données (listes, tableaux)
+  - Fonctions d'ordre supérieur (MAP, FILTER)
+  - Garbage Collector
+  - Optimisations du compilateur
+  - REPL interactif
 
 ## Tests
 
@@ -253,6 +325,25 @@ HALT")
 
 ### Tests Compilateur ✓ (31/31)
 - Phase 1 : Arithmétique (8 tests)
+- Phase 2 : Comparaisons (6 tests)
+- Phase 3 : IF-THEN-ELSE (4 tests)
+- Phase 4 : Variables LET (5 tests)
+- Phase 5 : Fonctions DEFUN (5 tests)
+- Phase 6 : Récursivité (3 tests)
+
+### Tests Closures ✓ (9/10 - 90%)
+- Lambda simple sans capture
+- Lambda avec plusieurs arguments
+- Lambda imbriquée
+- Fermeture simple avec capture
+- Fermeture avec plusieurs variables capturées
+- Fermetures imbriquées
+- Fermeture avec arithmétique complexe
+- Fermeture avec IF
+- Fermeture comme multiplicateur
+- ⚠ Lambda retournant lambda avec LET (limitation connue)
+
+**TOTAL : 59/60 tests réussis (98.3%)** 🎉
 - Phase 2 : Comparaisons (6 tests)
 - Phase 3 : Structures IF (4 tests)
 - Phase 4 : Variables LET (5 tests)

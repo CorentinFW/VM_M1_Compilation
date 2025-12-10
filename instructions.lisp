@@ -16,6 +16,7 @@
     (PUSH    . 2)   ; Empiler une valeur
     (POP     . 3)   ; Dépiler
     (DUP     . 4)   ; Dupliquer le sommet de la pile
+    (PUSHSYM . 5)   ; Empiler un symbole
     
     ;; Opérations arithmétiques
     (ADD     . 10)  ; Addition
@@ -50,6 +51,18 @@
     (MKCLOSURE    . 50)  ; Créer une fermeture
     (LOADCLOSURE  . 51)  ; Charger variable de fermeture
     (STORECLOSURE . 52)  ; Sauvegarder dans fermeture
+    (CALLCLOSURE  . 53)  ; Appeler une fermeture depuis la pile
+    
+    ;; Manipulation de listes
+    (CONS    . 70)  ; Créer une paire (cons a b)
+    (CAR     . 71)  ; Premier élément d'une paire
+    (CDR     . 72)  ; Reste d'une paire
+    (NULLP   . 73)  ; Test si NIL/null
+    (LISTP   . 74)  ; Test si c'est une liste
+    
+    ;; Comparaison de symboles
+    (SYMBOLP . 80)  ; Test si c'est un symbole
+    (EQSYM   . 81)  ; Égalité de symboles (eq)
     
     ;; Utilitaires
     (PRINT   . 60)) ; Afficher le sommet de la pile (debug)
@@ -69,7 +82,7 @@
 
 (defun instruction-has-operand-p (mnemonic)
   "Retourne T si l'instruction prend un opérande"
-  (member mnemonic '(PUSH JUMP JUMPIF JUMPNIF CALL LOAD STORE 
+  (member mnemonic '(PUSH PUSHSYM JUMP JUMPIF JUMPNIF CALL LOAD STORE 
                      LOADARG STOREARG ALLOC DEALLOC MKCLOSURE 
                      LOADCLOSURE STORECLOSURE)))
 
@@ -103,6 +116,7 @@
   '((HALT    . "Arrête l'exécution de la VM")
     (NOP     . "Aucune opération")
     (PUSH    . "Empile une valeur : PUSH <valeur>")
+    (PUSHSYM . "Empile un symbole : PUSHSYM <symbole>")
     (POP     . "Dépile et ignore la valeur au sommet")
     (DUP     . "Duplique la valeur au sommet de la pile")
     
@@ -134,6 +148,16 @@
     (MKCLOSURE . "Crée une fermeture : MKCLOSURE <addr> <nvars>")
     (LOADCLOSURE . "Charge var de fermeture : LOADCLOSURE <index>")
     (STORECLOSURE . "Sauvegarde dans fermeture : STORECLOSURE <index>")
+    (CALLCLOSURE . "Appelle une fermeture depuis la pile")
+    
+    (CONS    . "Dépile b puis a, empile (cons a b)")
+    (CAR     . "Dépile une paire, empile son CAR")
+    (CDR     . "Dépile une paire, empile son CDR")
+    (NULLP   . "Dépile, empile 1 si NIL, 0 sinon")
+    (LISTP   . "Dépile, empile 1 si liste, 0 sinon")
+    
+    (SYMBOLP . "Dépile, empile 1 si symbole, 0 sinon")
+    (EQSYM   . "Dépile b puis a, empile 1 si eq, 0 sinon")
     
     (PRINT   . "Affiche le sommet de la pile (debug)"))
   "Documentation des instructions")

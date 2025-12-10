@@ -152,7 +152,7 @@
         
         ;; Si l'opérande est un symbole et correspond à un label
         (when (and (symbolp operand)
-                   (member mnemonic '(JUMP JUMPIF JUMPNIF CALL)))
+                   (member mnemonic '(JUMP JUMPIF JUMPNIF CALL MKCLOSURE)))
           (multiple-value-bind (address found)
               (gethash operand (loader-labels loader))
             (if found

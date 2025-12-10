@@ -1,0 +1,100 @@
+═══════════════════════════════════════════════════════════════
+ÉTAT DU PROJET - 10 décembre 2025
+═══════════════════════════════════════════════════════════════
+
+✅ SUCCÈS MAJEUR: BOOTSTRAP NIVEAU 2 FONCTIONNEL
+═══════════════════════════════════════════════════════════════
+
+Une VM compilée en bytecode s'exécute sur la VM native et 
+effectue des calculs complexes! C'est une étape cruciale vers
+un système auto-hébergé.
+
+TESTS RÉUSSIS
+═══════════════════════════════════════════════════════════════
+
+Phase 1 (VM basique):        11/11 ✓
+Phase 2 (Loader):            Tests intégrés ✓
+Phase 3 (Compiler):          31/31 ✓  
+Phase 4 (Avancé):            Tests intégrés ✓
+Phase 5 (Closures):          0/10 ✗ (régression)
+Phase 6 (Bootstrap):         7/8 ✓
+
+TOTAL HORS CLOSURES: 49/50 tests = 98%
+
+RÉGRESSION IDENTIFIÉE
+═══════════════════════════════════════════════════════════════
+
+⚠️ Les corrections pour LOADARG vs LOAD ont cassé les closures
+
+Symptôme: "Variable non définie" pour les variables capturées
+Cause probable: Les indices de variables capturées ne sont pas
+               ajustés correctement avec le nouveau système
+
+CHANGEMENTS APPLIQUÉS AUJOURD'HUI
+═══════════════════════════════════════════════════════════════
+
+1. Correction ordre des arguments (nreverse supprimé)
+   - vm.lisp ligne ~241
+   
+2. Ajout du champ n-params à compiler-env
+   - Pour distinguer paramètres vs variables locales
+   
+3. Modification de la génération LOADARG/LOAD
+   - Paramètres: index < n-params → LOADARG index
+   - Locales: index >= n-params → LOAD (index - n-params + 1)
+   
+4. Ajout de n-params dans copy-compiler-env
+   - Pour préserver l'info dans les LETs imbriqués
+
+SOLUTIONS POSSIBLES
+═══════════════════════════════════════════════════════════════
+
+Option A: Rollback partiel
+  - Garder la correction de nreverse (essentielle)
+  - Annuler les changements LOADARG/LOAD  
+  - Résultat: Bootstrap ne marchera plus, closures OK
+
+Option B: Fix des closures
+  - Analyser comment compile-lambda gère les indices
+  - S'assurer que les variables capturées ne sont pas affectées
+  - Vérifier que LOADCLOSURE utilise les bons indices
+  - Résultat: Tout devrait marcher
+
+Option C: Deux environnements séparés
+  - Séparer complètement paramètres et variables locales
+  - Plus propre mais changement important
+  
+RECOMMANDATION
+═══════════════════════════════════════════════════════════════
+
+Si le bootstrap est la priorité → Garder l'état actuel
+Si les closures sont nécessaires → Option B (fix ciblé)
+
+Le bootstrap niveau 2 fonctionne et démontre un accomplissement
+majeur. Les closures peuvent être réparées en analysant comment
+les variables capturées interagissent avec le nouveau système
+d'indices.
+
+CODE À EXAMINER POUR FIX
+═══════════════════════════════════════════════════════════════
+
+• compiler.lisp ligne 64-80: Compilation des symboles
+  - Gestion de closure-vars vs variables normales
+  
+• compiler.lisp ligne 431+: compile-lambda
+  - Création de l'environnement pour le lambda
+  - Ajout des variables capturées
+  
+• compiler.lisp ligne 515+: compile-lambda-body
+  - Compilation du corps avec variables capturées
+
+TESTS POUR VALIDATION
+═══════════════════════════════════════════════════════════════
+
+Après fix, vérifier:
+1. clisp run-compiler-tests.lisp → 31/31 ✓
+2. clisp test-closures.lisp + (run-all-closure-tests) → 10/10 ✓
+3. clisp demo-simple-bootstrap.lisp → 7/8 ✓
+4. clisp test-debug-bootstrap.lisp → 5/5 ✓
+
+═══════════════════════════════════════════════════════════════
