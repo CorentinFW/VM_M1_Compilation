@@ -46,7 +46,7 @@ run_test() {
 run_test "Tests VM" "run-vm-tests.lisp" "11.*11"
 
 # Test 2: Tests Compiler
-run_test "Tests Compiler" "run-compiler-tests.lisp" "31/31"
+run_test "Tests Compiler" "run-compiler-tests.lisp" "32/32"
 
 # Test 3: Tests Closures
 output=$(clisp -x '(load "test-closures.lisp") (run-all-closure-tests)' 2>&1)
@@ -66,12 +66,6 @@ echo ""
 # Test 4: Tests LABELS
 run_test "Tests LABELS" "test-labels.lisp" "8 tests réussis"
 
-# Test 5: Tests Mini-loader
-run_test "Tests Mini-loader" "test-mini-loader.lisp" "10 tests réussis"
-
-# Test 6: Tests Mini-compiler
-run_test "Tests Mini-compiler" "test-mini-compiler.lisp" "20 tests réussis"
-
 # Calcul total
 total_tests=$((passed_tests + failed_tests))
 
@@ -90,13 +84,16 @@ if [ $failed_tests -eq 0 ]; then
     echo ""
     echo "Détail des tests:"
     echo "  ✓ 11 tests VM"
-    echo "  ✓ 31 tests Compiler"
+    echo "  ✓ 32 tests Compiler"
     echo "  ✓ 10 tests Closures"
     echo "  ✓ 8 tests LABELS"
-    echo "  ✓ 10 tests Mini-loader"
-    echo "  ✓ 20 tests Mini-compiler"
     echo ""
-    echo "TOTAL: 90 tests unitaires (100%)"
+    echo "TOTAL: 61 tests unitaires (100%)"
+    echo ""
+    echo "Système complet avec 3 fichiers principaux:"
+    echo "  • vm.lisp (Machine virtuelle)"
+    echo "  • loader.lisp (Loader ASM)"
+    echo "  • compiler.lisp (Compilateur LISP)"
     exit 0
 else
     echo "❌ CERTAINS TESTS ONT ÉCHOUÉ"

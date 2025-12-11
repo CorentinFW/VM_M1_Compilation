@@ -296,7 +296,8 @@
                  (vm-push vm (cdr pair))
                  (error "CDR: argument n'est pas une paire"))))
       (NULLP (let ((val (vm-pop vm)))
-               (vm-push vm (if (null val) 1 0))))
+               ;; Dans notre VM, NIL est représenté par 0
+               (vm-push vm (if (or (null val) (eq val 0)) 1 0))))
       (LISTP (let ((val (vm-pop vm)))
                (vm-push vm (if (listp val) 1 0))))
       
@@ -306,6 +307,86 @@
       (EQSYM (let ((b (vm-pop vm))
                    (a (vm-pop vm)))
                (vm-push vm (if (eq a b) 1 0))))
+      
+      ;; I/O Fichiers
+      (FOPEN (let ((mode operand)  ; 0=read, 1=write, 2=append
+                   (filename (vm-pop vm)))
+               (handler-case
+                   (let ((stream (open filename
+                                      :direction (case mode
+                                                   (0 :input)
+                                                   (1 :output)
+                                                   (2 :output))
+                                      :if-exists (if (= mode 2) :append :supersede)
+                                      :if-does-not-exist (if (= mode 0) :error :create))))
+                     (vm-push vm stream))
+                 (error (e) 
+                   (format t "FOPEN error: ~A~%" e)
+                   (vm-push vm 0)))))  ; 0 = erreur
+      
+      (FCLOSE (let ((stream (vm-pop vm)))
+                (when (streamp stream)
+                  (close stream))
+                (vm-push vm 1)))  ; succès
+      
+      (FREAD (let ((stream (vm-pop vm)))
+               (if (streamp stream)
+                   (handler-case
+                       (let ((expr (read stream nil 'eof)))
+                         (vm-push vm (if (eq expr 'eof) 0 expr)))
+                     (error (e)
+                       (format t "FREAD error: ~A~%" e)
+                       (vm-push vm 0)))
+                   (vm-push vm 0))))
+      
+      (FWRITE (let ((value (vm-pop vm))
+                    (stream (vm-pop vm)))
+                (if (streamp stream)
+                    (handler-case
+                        (progn
+                          (print value stream)
+                          (vm-push vm 1))  ; succès
+                      (error (e)
+                        (format t "FWRITE error: ~A~%" e)
+                        (vm-push vm 0)))
+                    (vm-push vm 0))))
+      
+      (READSTR (let ((stream (vm-pop vm)))
+                 (if (streamp stream)
+                     (handler-case
+                         (let ((line (read-line stream nil 'eof)))
+                           (vm-push vm (if (eq line 'eof) 0 line)))
+                       (error (e)
+                         (format t "READSTR error: ~A~%" e)
+                         (vm-push vm 0)))
+                     (vm-push vm 0))))
+      
+      (WRITESTR (let ((string (vm-pop vm))
+                      (stream (vm-pop vm)))
+                  (if (and (streamp stream) (stringp string))
+                      (handler-case
+                          (progn
+                            (write-string string stream)
+                            (vm-push vm 1))  ; succès
+                        (error (e)
+                          (format t "WRITESTR error: ~A~%" e)
+                          (vm-push vm 0)))
+                      (vm-push vm 0))))
+      
+      ;; Manipulation de chaînes
+      (STRCAT (let ((b (vm-pop vm))
+                    (a (vm-pop vm)))
+                (if (and (stringp a) (stringp b))
+                    (vm-push vm (concatenate 'string a b))
+                    (error "STRCAT: arguments doivent être des chaînes"))))
+      
+      (NUMTOSTR (let ((n (vm-pop vm)))
+                  (vm-push vm (write-to-string n))))
+      
+      (SYMTOSTR (let ((sym (vm-pop vm)))
+                  (if (symbolp sym)
+                      (vm-push vm (symbol-name sym))
+                      (vm-push vm (write-to-string sym)))))
       
       ;; Debug
       (PRINT (format t "=> ~A~%" (vm-peek vm)))

@@ -65,7 +65,20 @@
     (EQSYM   . 81)  ; Égalité de symboles (eq)
     
     ;; Utilitaires
-    (PRINT   . 60)) ; Afficher le sommet de la pile (debug)
+    (PRINT   . 60)  ; Afficher le sommet de la pile (debug)
+    
+    ;; I/O Fichiers
+    (FOPEN   . 90)  ; Ouvrir un fichier (nom sur pile) -> file-handle
+    (FCLOSE  . 91)  ; Fermer un fichier (handle sur pile)
+    (FREAD   . 92)  ; Lire une s-expr du fichier -> empile résultat
+    (FWRITE  . 93)  ; Écrire une s-expr (valeur, handle sur pile)
+    (READSTR . 94)  ; Lire une ligne de texte -> chaîne
+    (WRITESTR . 95) ; Écrire une chaîne (string, handle sur pile)
+    
+    ;; Manipulation de chaînes
+    (STRCAT  . 100) ; Concaténer deux chaînes
+    (NUMTOSTR . 101) ; Convertir nombre -> chaîne
+    (SYMTOSTR . 102)) ; Convertir symbole -> chaîne
   "Table de correspondance mnémonique -> opcode")
 
 ;;; ----------------------------------------------------------------------------
@@ -84,7 +97,7 @@
   "Retourne T si l'instruction prend un opérande"
   (member mnemonic '(PUSH PUSHSYM JUMP JUMPIF JUMPNIF CALL LOAD STORE 
                      LOADARG STOREARG ALLOC DEALLOC MKCLOSURE 
-                     LOADCLOSURE STORECLOSURE)))
+                     LOADCLOSURE STORECLOSURE FOPEN)))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Structure d'une instruction

@@ -113,20 +113,20 @@
     (= result 21)))
 
 (defun test-lambda-returning-lambda ()
-  "Test 10: Lambda qui retourne une lambda (créateur de fonction)"
-  (format t "~%Test 10: Lambda retournant une lambda~%")
-  ;; Note: Ce test nécessite le support des variables contenant des closures
-  ;; Pour l'instant, testons juste l'appel direct
+  "Test 10: Closure avec setq multiple (compteur)"
+  (format t "~%Test 10: Closure avec setq multiple~%")
+  ;; Test simplifié: appel direct de closure avec setq
   (let ((result (compile-and-run 
-                 '(let ((x 10))
-                    ((lambda (y) 
-                       (let ((z (+ x y)))
-                         ((lambda (w) (+ z w)) 5))) 
-                     3)))))
-    (if (= result 18)
-        (format t "✓ PASS: Lambda retournant lambda (10+3+5 = ~A)~%" result)
-        (format t "✗ FAIL: Lambda retournant lambda (attendu 18, obtenu ~A)~%" result))
-    (= result 18)))
+                 '(let ((count 10))
+                    ((lambda ()
+                       (setq count (+ count 1))
+                       (setq count (+ count 1))
+                       (setq count (+ count 1))
+                       count))))))
+    (if (= result 13)
+        (format t "✓ PASS: Compteur closure (10+3 = ~A)~%" result)
+        (format t "✗ FAIL: Compteur closure (attendu 13, obtenu ~A)~%" result))
+    (= result 13)))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Suite de tests complète

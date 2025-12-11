@@ -1,0 +1,102 @@
+═══════════════════════════════════════════════════════════════════════════════
+  TODO LIST: AUTO-COMPILATION DU COMPILATEUR
+═══════════════════════════════════════════════════════════════════════════════
+
+OBJECTIF: Rendre compiler.lisp capable de se compiler lui-même
+
+STRATÉGIE:
+  Phase 1 (Étapes 1-4): Étendre le compilateur pour supporter les formes qu'il utilise
+  Phase 2 (Étapes 5-9): Réécrire le compilateur avec uniquement ces formes
+  Phase 3 (Étapes 10-13): Tests et validation du bootstrap
+
+═══════════════════════════════════════════════════════════════════════════════
+
+PHASE 1: EXTENSION DU COMPILATEUR
+─────────────────────────────────────────────────────────────────────────────
+
+[ ] 1. Analyser formes LISP supportées vs utilisées
+      - Lister toutes les formes dans compile-expr
+      - Identifier les formes utilisées dans compiler.lisp
+      - Documenter le gap
+
+[ ] 2. Ajouter support APPEND au compilateur
+      - Implémenter compile-append
+      - (append list1 list2 ...) → récursion
+      - Tests: (append '(1 2) '(3 4)) → (1 2 3 4)
+
+[ ] 3. Ajouter support DOLIST au compilateur
+      - Implémenter compile-dolist
+      - (dolist (var list) body...) → récursion avec LABELS
+      - Tests: (dolist (x '(1 2 3)) (print x))
+
+[ ] 4. Ajouter support CASE au compilateur
+      - Implémenter compile-case
+      - (case expr (val1 body1) (val2 body2) (t default))
+      - Transformer en IF imbriqués
+      - Tests: (case x (1 'un) (2 'deux) (t 'autre))
+
+═══════════════════════════════════════════════════════════════════════════════
+
+PHASE 2: RÉÉCRITURE DU COMPILATEUR
+─────────────────────────────────────────────────────────────────────────────
+
+[ ] 5. Remplacer DEFSTRUCT par alists
+      - compiler-env → alist avec clés :variables, :functions, etc.
+      - Créer make-compiler-env, env-get, env-set
+      - Remplacer tous les compiler-env-* accesseurs
+
+[ ] 6. Remplacer FORMAT par string-concat
+      - Créer int-to-string, symbol-to-string
+      - Créer string-concat pour concaténation
+      - Remplacer tous les (format nil ...) 
+
+[ ] 7. Remplacer GENSYM par compteur manuel
+      - Utiliser :label-counter dans l'environnement
+      - generate-label retourne (label . new-env)
+      - Propager le nouvel environnement partout
+
+[ ] 8. Remplacer MAKE-HASH-TABLE par alists
+      - :functions devient une alist ((nom . label) ...)
+      - Remplacer gethash par assoc
+      - Remplacer setf gethash par acons/push
+
+[ ] 9. Remplacer MAPHASH par itération alist
+      - Utiliser dolist ou labels pour parcourir
+      - Transformer les (maphash (lambda (k v) ...) table)
+
+═══════════════════════════════════════════════════════════════════════════════
+
+PHASE 3: TESTS ET VALIDATION
+─────────────────────────────────────────────────────────────────────────────
+
+[ ] 10. Tester compilation du compilateur
+       - Charger compiler.lisp dans CLISP
+       - Lire compiler.lisp comme S-expr
+       - Compiler avec compile-lisp
+       - Vérifier le code ASM généré
+
+[ ] 11. Corriger bugs de bootstrap
+       - Identifier les erreurs de compilation
+       - Corriger les cas particuliers
+       - Gérer les dépendances circulaires
+
+[ ] 12. Valider tous les tests passent
+       - Exécuter run-all-tests.sh
+       - Vérifier 61/61 tests OK
+       - Tester les 4 requirements
+
+[ ] 13. Compiler compiler.lisp avec lui-même
+       - compiler.lisp → compiler.asm
+       - loader → bytecode
+       - vm → exécution
+       - BOOTSTRAP COMPLET ✓
+
+═══════════════════════════════════════════════════════════════════════════════
+
+NOTES TECHNIQUES:
+- WITH-OPEN-FILE peut rester (utilisé seulement dans compile-lisp-to-file)
+- COERCE peut rester (conversion string/list - primitif)
+- Les formes CL de base (cons, car, cdr, etc.) sont OK
+- LABELS est déjà supporté - utile pour la récursion locale
+
+═══════════════════════════════════════════════════════════════════════════════
