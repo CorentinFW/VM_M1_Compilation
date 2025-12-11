@@ -128,6 +128,10 @@
        ((eq (car expr) 'lambda)
         (compile-lambda expr env))
        
+       ;; LABELS (fonctions locales)
+       ((eq (car expr) 'labels)
+        (compile-labels expr env))
+       
        ;; Appel de fonction
        (t (compile-call expr env))))
     
@@ -548,6 +552,74 @@
       (dolist (expr body)
         (setf result (append result (compile-expr expr new-env))))
       result)))
+
+;;; ----------------------------------------------------------------------------
+;;; Compilation d'appels de fonction
+;;; ----------------------------------------------------------------------------
+
+;;; ----------------------------------------------------------------------------
+;;; Compilation de LABELS (fonctions locales)
+;;; ----------------------------------------------------------------------------
+
+(defun compile-labels (expr env)
+  "Compile des fonctions locales: (labels ((f1 (x) body1) (f2 (y) body2)) main-body)"
+  (let* ((func-defs (cadr expr))   ; Liste des définitions de fonctions
+         (main-body (cddr expr))    ; Corps principal
+         (end-label (generate-label env "END_LABELS"))
+         (new-env (copy-compiler-env env))
+         (func-labels '())
+         (code '()))
+    
+    ;; Étape 1: Créer les labels pour toutes les fonctions
+    ;; Cela permet la récursion mutuelle
+    (dolist (func-def func-defs)
+      (let* ((func-name (car func-def))
+             (func-label (generate-label env (format nil "LABEL_~A" func-name))))
+        (push (cons func-name func-label) func-labels)
+        ;; Enregistrer dans la table des fonctions du nouvel environnement
+        (setf (gethash func-name (compiler-env-functions new-env)) func-label)))
+    
+    ;; Inverser pour avoir l'ordre original
+    (setf func-labels (reverse func-labels))
+    
+    ;; Étape 2: Compiler chaque fonction locale
+    (dolist (func-def func-defs)
+      (let* ((func-name (car func-def))
+             (params (cadr func-def))
+             (body (cddr func-def))
+             (func-label (cdr (assoc func-name func-labels)))
+             (func-env (make-compiler-env :in-function t :n-params (length params))))
+        
+        ;; Copier les fonctions (y compris les labels locaux) dans l'environnement de la fonction
+        (maphash (lambda (k v)
+                   (setf (gethash k (compiler-env-functions func-env)) v))
+                 (compiler-env-functions new-env))
+        
+        ;; Ajouter les paramètres à l'environnement de la fonction
+        (let ((param-index 0))
+          (dolist (param params)
+            (push (cons param param-index) (compiler-env-variables func-env))
+            (incf param-index)))
+        
+        ;; Générer le code de la fonction
+        (setf code (append code
+                          (list (format nil "~A:" func-label))
+                          (compile-function-body body func-env)
+                          (list "RET")))))
+    
+    ;; Étape 3: Générer le code final
+    (append
+     ;; Sauter par-dessus toutes les définitions de fonctions
+     (list (format nil "JUMP ~A" end-label))
+     ;; Code de toutes les fonctions
+     code
+     ;; Label de fin
+     (list (format nil "~A:" end-label))
+     ;; Compiler le corps principal avec le nouvel environnement
+     (let ((result '()))
+       (dolist (expr main-body)
+         (setf result (append result (compile-expr expr new-env))))
+       result))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Compilation d'appels de fonction

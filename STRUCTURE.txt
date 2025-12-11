@@ -1,0 +1,121 @@
+═══════════════════════════════════════════════════════════════
+  STRUCTURE DU PROJET - VERSION ORGANISÉE
+═══════════════════════════════════════════════════════════════
+
+Le projet a été réorganisé pour plus de clarté.
+Les fichiers essentiels sont à la racine, les anciens dans old/
+
+───────────────────────────────────────────────────────────────
+  FICHIERS ESSENTIELS (RACINE)
+───────────────────────────────────────────────────────────────
+
+📚 DOCUMENTATION (À LIRE EN PREMIER):
+  ✨ QUICKSTART.txt          - Démarrage rapide (RECOMMANDÉ)
+  ✨ README.md               - Guide principal complet
+  ✨ RAPPORT_FINAL.txt       - Rapport détaillé du projet
+     STATUT_FINAL.txt        - État et métriques
+     PRESENTATION.txt        - Présentation visuelle
+     MINI_LISP_SPEC.txt      - Spécification LISP pur
+
+💻 CODE SOURCE:
+  • instructions.lisp         - Jeu d'instructions (43 opcodes)
+  • vm.lisp                   - Machine virtuelle
+  • loader.lisp               - Loader ASM → bytecode
+  • compiler.lisp             - Compilateur LISP → ASM
+  • mini-loader.lisp          - Loader en LISP pur
+  • mini-compiler.lisp        - Compiler en LISP pur
+
+🧪 TESTS (90 tests - 100%):
+  ⭐ run-all-tests.sh         - Script principal de test
+  • run-vm-tests.lisp         - 11 tests VM
+  • run-compiler-tests.lisp   - 31 tests Compiler
+  • test-closures.lisp        - 10 tests Closures
+  • test-labels.lisp          - 8 tests LABELS
+  • test-mini-loader.lisp     - 10 tests Mini-loader
+  • test-mini-compiler.lisp   - 20 tests Mini-compiler
+
+🎬 DÉMONSTRATION:
+  • demo-final.lisp           - Démonstration complète (20 exemples)
+
+📁 AUTRES:
+  • exemples/                 - Exemples de code ASM
+  • LEC.pdf                   - Support de cours (si applicable)
+
+───────────────────────────────────────────────────────────────
+  DOSSIER old/ (FICHIERS ARCHIVÉS)
+───────────────────────────────────────────────────────────────
+
+Les fichiers non essentiels ont été déplacés dans old/ pour
+garder la racine propre. Voir old/README.txt pour détails.
+
+old/
+├── README.txt              - Explication du contenu archivé
+├── vm-bootstrap.lisp       - Ancienne version VM bootstrap
+├── demos/                  - Anciennes démos (6 fichiers)
+│   ├── demo-bootstrap.lisp
+│   ├── demo-fibo.lisp
+│   ├── exemples-closures.lisp
+│   └── ...
+├── docs/                   - Anciennes documentations (13 fichiers)
+│   ├── TODO_Compile.txt
+│   ├── DOC_LABELS.txt
+│   ├── STRATEGIE_BOOTSTRAP.md
+│   └── ...
+└── tests/                  - Anciens tests (10 fichiers)
+    ├── tests.lisp
+    ├── test-compiler.lisp
+    ├── test-bootstrap*.lisp
+    └── ...
+
+───────────────────────────────────────────────────────────────
+  COMMANDES PRINCIPALES
+───────────────────────────────────────────────────────────────
+
+# Validation complète du système
+./run-all-tests.sh
+
+# Démonstration interactive
+clisp demo-final.lisp
+
+# Documentation
+cat QUICKSTART.txt          # Démarrage rapide
+cat README.md               # Guide complet
+cat RAPPORT_FINAL.txt       # Rapport détaillé
+
+# Tests individuels
+clisp run-vm-tests.lisp
+clisp run-compiler-tests.lisp
+clisp test-closures.lisp
+
+───────────────────────────────────────────────────────────────
+  RÉSUMÉ
+───────────────────────────────────────────────────────────────
+
+RACINE (25 fichiers):
+  • 6 fichiers de documentation
+  • 6 fichiers de code source
+  • 7 fichiers de tests + 1 script
+  • 1 démonstration
+  • 1 dossier exemples/
+  • 1 dossier old/
+
+ARCHIVÉS (30 fichiers dans old/):
+  • 13 anciennes documentations
+  • 10 anciens tests
+  • 6 anciennes démos
+  • 1 ancienne VM
+
+TOTAL: 55 fichiers organisés
+
+═══════════════════════════════════════════════════════════════
+  AVANTAGES DE CETTE STRUCTURE
+═══════════════════════════════════════════════════════════════
+
+✓ Racine propre et claire (25 fichiers essentiels)
+✓ Documentation facilement accessible
+✓ Tests organisés et fonctionnels
+✓ Historique préservé dans old/
+✓ Navigation intuitive
+✓ Tous les tests passent (90/90)
+
+═══════════════════════════════════════════════════════════════

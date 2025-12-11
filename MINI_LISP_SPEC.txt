@@ -1,0 +1,239 @@
+═══════════════════════════════════════════════════════════════
+MINI-COMPILER - Spécification du sous-ensemble LISP
+═══════════════════════════════════════════════════════════════
+
+OBJECTIF
+═══════════════════════════════════════════════════════════════
+Définir un sous-ensemble minimal de LISP qui:
+  1. Est suffisant pour écrire des programmes utiles
+  2. Est auto-compilable (peut compiler son propre code)
+  3. Peut être implémenté en LISP pur (sans defstruct, hash-table)
+
+═══════════════════════════════════════════════════════════════
+SOUS-ENSEMBLE SUPPORTÉ - PHASE 1 (MINIMAL)
+═══════════════════════════════════════════════════════════════
+
+1. NOMBRES ENTIERS
+   ✓ Nombres positifs: 0, 1, 42, 100
+   ✓ Nombres négatifs: -1, -42
+   ✗ Pas de flottants (limitation)
+
+2. VARIABLES
+   ✓ Symboles simples: x, y, count, result
+   ✗ Pas de quote pour l'instant
+
+3. OPÉRATEURS ARITHMÉTIQUES
+   ✓ Addition: (+ a b)
+   ✓ Soustraction: (- a b)
+   ✓ Multiplication: (* a b)
+   ✓ Division: (/ a b)
+   ✗ Pas d'opérateurs unaires pour l'instant
+
+4. OPÉRATEURS DE COMPARAISON
+   ✓ Égalité: (= a b)
+   ✓ Inférieur: (< a b)
+   ✓ Inférieur ou égal: (<= a b)
+   ✓ Supérieur: (> a b)
+   ✓ Supérieur ou égal: (>= a b)
+
+5. CONDITIONNELLE IF
+   ✓ Forme: (if condition then-expr else-expr)
+   ✓ Les deux branches obligatoires
+   ✗ Pas de if sans else pour l'instant
+
+6. LET (VARIABLES LOCALES)
+   ✓ Forme: (let ((var1 val1) (var2 val2)) body)
+   ✓ Une seule expression dans body
+   ✗ Pas de let* pour l'instant
+   ✗ Pas de let imbriqués (phase 2)
+
+7. DEFUN (DÉFINITION DE FONCTION)
+   ✓ Forme: (defun nom (param1 param2) body)
+   ✓ Une seule expression dans body
+   ✓ Récursion supportée
+   ✗ Pas de fonctions mutuellement récursives (phase 2)
+
+8. APPEL DE FONCTION
+   ✓ Forme: (fonction arg1 arg2 ...)
+   ✓ Fonctions définies par defun
+   ✗ Pas de lambda pour l'instant
+
+═══════════════════════════════════════════════════════════════
+EXEMPLES DE PROGRAMMES SUPPORTÉS - PHASE 1
+═══════════════════════════════════════════════════════════════
+
+Exemple 1: Expression simple
+─────────────────────────────
+(+ 2 3)
+→ Compilable ✓
+
+Exemple 2: Variable locale
+─────────────────────────────
+(let ((x 10))
+  x)
+→ Compilable ✓
+
+Exemple 3: If simple
+─────────────────────────────
+(if (< 5 10)
+    1
+    0)
+→ Compilable ✓
+
+Exemple 4: Fonction simple
+─────────────────────────────
+(defun double (x)
+  (* x 2))
+→ Compilable ✓
+
+Exemple 5: Fonction récursive
+─────────────────────────────
+(defun fact (n)
+  (if (<= n 1)
+      1
+      (* n (fact (- n 1)))))
+→ Compilable ✓
+
+Exemple 6: Let avec calcul
+─────────────────────────────
+(let ((x 10)
+      (y 20))
+  (+ x y))
+→ Compilable ✓
+
+═══════════════════════════════════════════════════════════════
+SOUS-ENSEMBLE ÉTENDU - PHASE 2 (SI TEMPS)
+═══════════════════════════════════════════════════════════════
+
+9. PROGN (SÉQUENCE)
+   (progn expr1 expr2 expr3)
+
+10. COND (SÉLECTION MULTIPLE)
+    (cond
+      (test1 result1)
+      (test2 result2)
+      (t default))
+
+11. LET IMBRIQUÉS
+    (let ((x 10))
+      (let ((y 20))
+        (+ x y)))
+
+12. LAMBDA (CLOSURES SIMPLES)
+    (lambda (x) (* x 2))
+
+13. LABELS (FONCTIONS LOCALES)
+    (labels ((f (x) (* x 2)))
+      (f 5))
+
+═══════════════════════════════════════════════════════════════
+CONTRAINTES D'IMPLÉMENTATION
+═══════════════════════════════════════════════════════════════
+
+Le mini-compiler DOIT être écrit en LISP pur:
+  ✗ PAS de defstruct
+  ✗ PAS de hash-table (utiliser listes d'associations)
+  ✗ PAS de gensym (compteurs manuels)
+  ✗ PAS de format avancé
+  ✗ PAS de read (parser manuel)
+  
+  ✓ Seulement: cons, car, cdr, list, append
+  ✓ if, cond, let, defun, lambda
+  ✓ +, -, *, /, =, <, >, <=, >=
+
+═══════════════════════════════════════════════════════════════
+STRUCTURES DE DONNÉES
+═══════════════════════════════════════════════════════════════
+
+1. ENVIRONNEMENT
+   Représenté comme liste d'associations:
+   ((var1 . index1) (var2 . index2) ...)
+
+2. TABLE DES FONCTIONS
+   Liste d'associations:
+   ((func1 . label1) (func2 . label2) ...)
+
+3. COMPTEUR DE LABELS
+   Simple entier passé en paramètre et retourné
+
+4. S-EXPRESSIONS
+   Structures de listes naturelles de LISP:
+   - Nombre: 42
+   - Symbole: 'x
+   - Liste: (+ 2 3)
+
+═══════════════════════════════════════════════════════════════
+ARCHITECTURE DU MINI-COMPILER
+═══════════════════════════════════════════════════════════════
+
+Modules principaux:
+
+1. PARSER (optionnel, si on lit depuis chaîne)
+   string → s-expressions
+
+2. COMPILER
+   s-expression → liste d'instructions ASM
+   
+   Sous-modules:
+   - compile-number
+   - compile-variable
+   - compile-arithmetic
+   - compile-comparison
+   - compile-if
+   - compile-let
+   - compile-defun
+   - compile-call
+
+3. CODE GENERATOR
+   liste d'instructions → chaîne ASM
+
+═══════════════════════════════════════════════════════════════
+STRATÉGIE DE DÉVELOPPEMENT
+═══════════════════════════════════════════════════════════════
+
+Étape 1: Parser (si nécessaire)
+  - Si on accepte des s-expressions directement: SKIP
+  - Sinon: parser minimal string → sexpr
+
+Étape 2: Compiler les expressions simples
+  - Nombres
+  - Variables
+  - Arithmétique
+
+Étape 3: Compiler les structures de contrôle
+  - IF
+  - LET
+
+Étape 4: Compiler les fonctions
+  - DEFUN
+  - Appels de fonction
+  - Récursion
+
+Étape 5: Tests
+  - Comparer avec compiler natif
+  - Valider sur programmes tests
+
+Étape 6: Auto-compilation (Phase 4)
+  - Compiler le mini-compiler avec lui-même
+  - Vérifier convergence
+
+═══════════════════════════════════════════════════════════════
+ESTIMATION DE COMPLEXITÉ
+═══════════════════════════════════════════════════════════════
+
+Lignes de code estimées:
+  - Utilitaires (listes, lookups): ~100 lignes
+  - Compilateur expressions: ~200 lignes
+  - Compilateur structures: ~200 lignes
+  - Compilateur fonctions: ~150 lignes
+  - Code generator: ~100 lignes
+  - Tests: ~100 lignes
+  
+  TOTAL: ~850 lignes (estimation haute)
+
+Temps estimé:
+  - Phase 1 (minimal): 6-8 heures
+  - Phase 2 (étendu): 4-6 heures
+  - Total: 10-14 heures
+
+═══════════════════════════════════════════════════════════════
