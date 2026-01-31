@@ -54,7 +54,7 @@ fibo_recursive:
 ; ----------------------------------------------------------------------------
 main:
     ; Appeler fibo(7)
-    PUSH 7
+    PUSH 8
     PUSH 1          ; 1 argument
     CALL fibo
     
