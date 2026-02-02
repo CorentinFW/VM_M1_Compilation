@@ -162,7 +162,7 @@ Le chargeur parse et valide les instructions ASM avant de les charger dans la VM
 ## Limitations Actuelles
 
 - **Loop** : Implémentation basique, pas de support pour `loop ... while` complexe
-- **Fermetures** : Implémentation simplifiée, capture d'environnement partielle
+- **Fermetures** : Implémentation partielle - `lambda` génère du code mais ne capture pas l'environnement. `funcall` n'est pas implémenté. Pour utiliser des fonctions anonymes, utilisez `labels` à la place.
 - **Types** : Pas de vérification de types à la compilation
 - **Optimisations** : Aucune optimisation du code généré
 - **Garbage Collection** : Pas de gestion mémoire avancée
