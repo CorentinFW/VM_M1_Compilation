@@ -1,5 +1,5 @@
-;;;; Test: Appel d'une fermeture
-;;;; Appelle la fermeture créée avec l'argument 5
+;;;; Test: Fermeture simple
+;;;; La lambda capture x de let
 
 (funcall (let ((x 10))
            (lambda (y)

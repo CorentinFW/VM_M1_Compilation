@@ -245,11 +245,38 @@
       ;; Fermetures
       ((string= opcode-name "MAKECLOSURE")
        (let ((label (first operands))
-             (nvars (second operands)))
-         ;; Pour simplifier, on pousse juste le label
-         ;; Une implémentation complète devrait capturer l'environnement
-         (vm-push vm (list 'CLOSURE label nvars)))
+             (nfree (second operands)))
+         ;; Dépiler les variables capturées
+         (let ((captured-vars (loop repeat nfree collect (vm-pop vm))))
+           ;; Créer la fermeture avec l'environnement capturé
+           (vm-push vm (list 'CLOSURE label (nreverse captured-vars)))))
        (incf (vm-pc vm)))
+      
+      ;; Appel de fermeture
+      ((string= opcode-name "CALLCLOSURE")
+       (let* ((nargs (car operands))
+              ;; Récupérer la fermeture
+              (closure (vm-pop vm))
+              ;; Récupérer les arguments
+              (args (loop repeat nargs collect (vm-pop vm))))
+         (unless (and (listp closure) (eq (car closure) 'CLOSURE))
+           (error "Tentative d'appel sur une non-fermeture: ~A" closure))
+         (let ((label (second closure))
+               (captured-vars (third closure)))
+           ;; Créer un frame avec les variables capturées + les arguments
+           (vm-push-frame vm (+ (length captured-vars) nargs))
+           ;; Stocker d'abord les variables capturées
+           (loop for var in captured-vars
+                 for i from 0
+                 do (vm-store-var vm 0 i var))
+           ;; Puis les arguments
+           (loop for arg in args
+                 for i from (length captured-vars)
+                 do (vm-store-var vm 0 i arg))
+           ;; Sauvegarder l'adresse de retour
+           (setf (frame-return-pc (vm-current-frame vm)) (1+ (vm-pc vm)))
+           ;; Sauter à la fonction
+           (setf (vm-pc vm) (vm-find-label vm label)))))
       
       ;; Affichage
       ((string= opcode-name "PRINT")

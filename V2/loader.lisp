@@ -40,6 +40,11 @@
             (error "CALL requiert 2 opérandes (label, nargs): ~A" instr))
           instr)
          
+         ((string= opcode-name "CALLCLOSURE")
+          (unless (= (length operands) 1)
+            (error "CALLCLOSURE requiert 1 opérande (nargs): ~A" instr))
+          instr)
+         
          ((member opcode-name '("JUMP" "JUMPNIL" "LABEL") :test #'string=)
           (unless (= (length operands) 1)
             (error "~A requiert 1 opérande: ~A" opcode-name instr))

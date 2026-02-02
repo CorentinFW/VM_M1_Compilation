@@ -188,6 +188,10 @@
        (append (compile-expr (cadr expr) env)
                (list (emit-print))))
       
+      ;; Funcall - appel d'une fermeture
+      ((eq op 'funcall)
+       (compile-funcall-closure (cadr expr) (cddr expr) env))
+      
       ;; Appel de fonction
       (t (compile-funcall op (cdr expr) env)))))
 
@@ -250,14 +254,45 @@
 (defun compile-lambda (params body env)
   "Compile une expression lambda (fermeture)"
   (let* ((label (gen-label "LAMBDA"))
-         (new-env (add-vars params (new-env env)))
-         (nvars (length params)))
+         (skip-label (gen-label "SKIP_LAMBDA"))
+         ;; Identifier les variables libres
+         (free-vars (find-free-vars body params env))
+         (nfree (length free-vars))
+         ;; Créer un nouvel environnement avec variables libres + paramètres
+         (new-env (add-vars (append free-vars params) (new-env env))))
     (append
-     (list (emit-makeclosure label nvars))
+     ;; Pousser les valeurs des variables libres sur la pile
+     (loop for var in free-vars
+           append (compile-expr var env))
+     ;; Créer la fermeture avec le label et le nombre de variables capturées
+     (list (emit-makeclosure label nfree))
+     ;; Sauter par-dessus le code de la fonction
+     (list (emit-jump skip-label))
+     ;; Code de la fonction
      (list (emit-label label))
+     ;; Compiler le corps avec le nouvel environnement
      (loop for expr in body
            append (compile-expr expr new-env))
-     (list (emit-return)))))
+     (list (emit-return))
+     (list (emit-label skip-label)))))
+
+(defun find-free-vars (body params env)
+  "Trouve les variables libres dans le corps d'une lambda"
+  (labels ((find-vars (expr)
+             (cond
+               ((symbolp expr)
+                (if (and (not (member expr params))
+                        (lookup-var expr env))
+                    (list expr)
+                    nil))
+               ((atom expr) nil)
+               ((eq (car expr) 'quote) nil)
+               ((eq (car expr) 'lambda)
+                ;; Ne pas descendre dans les lambdas imbriquées
+                nil)
+               (t (remove-duplicates
+                   (apply #'append (mapcar #'find-vars expr)))))))
+    (remove-duplicates (apply #'append (mapcar #'find-vars body)))))
 
 (defun compile-labels (bindings body env)
   "Compile des fonctions locales avec labels"
@@ -317,6 +352,21 @@
                           (format nil "FN_~A" fn)
                           fn)
                       nargs)))))
+
+(defun compile-funcall-closure (closure-expr args env)
+  "Compile un appel de fermeture via funcall"
+  (let ((nargs (length args)))
+    (append
+     ;; Compiler les arguments
+     (loop for arg in (reverse args)
+           append (compile-expr arg env))
+     ;; Compiler l'expression de fermeture
+     (compile-expr closure-expr env)
+     ;; Appeler la fermeture
+     (list (emit-callclosure nargs)))))
+
+(defun emit-callclosure (nargs)
+  `(CALLCLOSURE ,nargs))
 
 ;;; Interface principale
 (defun compile-to-asm (expr)
