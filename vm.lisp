@@ -93,56 +93,19 @@
       (error "Aucun frame local")))
 
 ;;; ----------------------------------------------------------------------------
-;;; Gestion des fermetures (closures)
-;;; ----------------------------------------------------------------------------
-
-(defstruct closure
-  "Représente une fermeture avec son code et ses variables capturées"
-  (code-address 0 :type integer)     ; Adresse du code de la fonction
-  (captured-vars '()))               ; Variables capturées de l'environnement
-
-(defun vm-make-closure (vm code-address n-vars)
-  "Crée une fermeture en capturant n-vars variables depuis la pile"
-  (let ((captured '()))
-    ;; Capturer n-vars variables depuis la pile
-    (dotimes (i n-vars)
-      (push (vm-pop vm) captured))
-    ;; Les variables sont dans l'ordre inverse, on les remet dans le bon ordre
-    (setf captured (nreverse captured))
-    ;; Créer et retourner la fermeture
-    (make-closure :code-address code-address
-                  :captured-vars captured)))
-
-(defun vm-load-from-closure (vm closure-obj index)
-  "Charge une variable capturée depuis une fermeture"
-  (let ((vars (closure-captured-vars closure-obj)))
-    (if (< index (length vars))
-        (nth index vars)
-        (error "Index de fermeture hors limite: ~A" index))))
-
-(defun vm-store-in-closure (vm closure-obj index value)
-  "Modifie une variable capturée dans une fermeture"
-  (let ((vars (closure-captured-vars closure-obj)))
-    (if (< index (length vars))
-        (setf (nth index vars) value)
-        (error "Index de fermeture hors limite: ~A" index))))
-
-;;; ----------------------------------------------------------------------------
 ;;; Gestion de la pile d'appels
 ;;; ----------------------------------------------------------------------------
 
 (defstruct call-frame
   "Frame d'appel de fonction"
   (return-address 0 :type integer)   ; Adresse de retour
-  (args '())                         ; Arguments de la fonction
-  (closure nil))                     ; Fermeture associée (optionnel)
+  (args '()))                        ; Arguments de la fonction
 
-(defun vm-call (vm address args &optional closure)
-  "Appelle une fonction à l'adresse donnée avec des arguments et optionnellement une fermeture"
+(defun vm-call (vm address args)
+  "Appelle une fonction à l'adresse donnée avec des arguments"
   (let ((frame (make-call-frame 
                 :return-address (1+ (vm-pc vm))  ; Sauvegarder PC+1 pour retourner après CALL
-                :args args
-                :closure closure)))
+                :args args)))
     (push frame (vm-call-stack vm))
     (setf (vm-pc vm) address)))
 
@@ -182,7 +145,6 @@
       
       ;; Pile
       (PUSH (vm-push vm operand))
-      (PUSHSYM (vm-push vm operand))  ; Empile un symbole
       (POP (vm-pop vm))
       (DUP (vm-dup vm))
       
@@ -237,27 +199,9 @@
                   (args '()))
               (dotimes (i n-args)
                 (push (vm-pop vm) args))
-              ;; Les arguments sont maintenant dans le bon ordre (push inverse le dépilage)
-              ;; PAS de nreverse!
-              ;; Vérifier si on appelle une fermeture
-              (let ((target operand))
-                (if (closure-p target)
-                    ;; Appel de fermeture
-                    (vm-call vm (closure-code-address target) args target)
-                    ;; Appel de fonction normale
-                    (vm-call vm target args)))
+              ;; Les arguments sont maintenant dans l'ordre inverse, on les remet dans le bon ordre
+              (vm-call vm operand (nreverse args))
               (return-from vm-execute-instruction)))
-      (CALLCLOSURE (let* ((closure (vm-pop vm))  ; La fermeture à appeler
-                          (n-args (vm-pop vm))    ; Nombre d'arguments
-                          (args '()))
-                     (dotimes (i n-args)
-                       (push (vm-pop vm) args))
-                     (setf args (nreverse args))
-                     ;; Appeler la fermeture
-                     (if (closure-p closure)
-                         (vm-call vm (closure-code-address closure) args closure)
-                         (error "CALLCLOSURE: l'objet n'est pas une fermeture"))
-                     (return-from vm-execute-instruction)))
       (RET (vm-return vm)
            (return-from vm-execute-instruction))
       
@@ -268,125 +212,6 @@
       (LOADARG (vm-push vm (vm-load-arg vm operand)))
       (ALLOC (vm-alloc-locals vm operand))
       (DEALLOC (vm-dealloc-locals vm operand))
-      
-      ;; Fermetures
-      (MKCLOSURE (let ((n-vars (vm-pop vm))  ; Nombre de variables à capturer
-                       (code-addr operand))   ; Adresse du code
-                   (let ((closure (vm-make-closure vm code-addr n-vars)))
-                     (vm-push vm closure))))
-      (LOADCLOSURE (let* ((frame (car (vm-call-stack vm)))
-                          (closure (call-frame-closure frame))
-                          (value (vm-load-from-closure vm closure operand)))
-                     (vm-push vm value)))
-      (STORECLOSURE (let* ((frame (car (vm-call-stack vm)))
-                           (closure (call-frame-closure frame))
-                           (value (vm-pop vm)))
-                      (vm-store-in-closure vm closure operand value)))
-      
-      ;; Listes
-      (CONS (let ((b (vm-pop vm))
-                  (a (vm-pop vm)))
-              (vm-push vm (cons a b))))
-      (CAR (let ((pair (vm-pop vm)))
-             (if (consp pair)
-                 (vm-push vm (car pair))
-                 (error "CAR: argument n'est pas une paire"))))
-      (CDR (let ((pair (vm-pop vm)))
-             (if (consp pair)
-                 (vm-push vm (cdr pair))
-                 (error "CDR: argument n'est pas une paire"))))
-      (NULLP (let ((val (vm-pop vm)))
-               ;; Dans notre VM, NIL est représenté par 0
-               (vm-push vm (if (or (null val) (eq val 0)) 1 0))))
-      (LISTP (let ((val (vm-pop vm)))
-               (vm-push vm (if (listp val) 1 0))))
-      
-      ;; Symboles
-      (SYMBOLP (let ((val (vm-pop vm)))
-                 (vm-push vm (if (symbolp val) 1 0))))
-      (EQSYM (let ((b (vm-pop vm))
-                   (a (vm-pop vm)))
-               (vm-push vm (if (eq a b) 1 0))))
-      
-      ;; I/O Fichiers
-      (FOPEN (let ((mode operand)  ; 0=read, 1=write, 2=append
-                   (filename (vm-pop vm)))
-               (handler-case
-                   (let ((stream (open filename
-                                      :direction (case mode
-                                                   (0 :input)
-                                                   (1 :output)
-                                                   (2 :output))
-                                      :if-exists (if (= mode 2) :append :supersede)
-                                      :if-does-not-exist (if (= mode 0) :error :create))))
-                     (vm-push vm stream))
-                 (error (e) 
-                   (format t "FOPEN error: ~A~%" e)
-                   (vm-push vm 0)))))  ; 0 = erreur
-      
-      (FCLOSE (let ((stream (vm-pop vm)))
-                (when (streamp stream)
-                  (close stream))
-                (vm-push vm 1)))  ; succès
-      
-      (FREAD (let ((stream (vm-pop vm)))
-               (if (streamp stream)
-                   (handler-case
-                       (let ((expr (read stream nil 'eof)))
-                         (vm-push vm (if (eq expr 'eof) 0 expr)))
-                     (error (e)
-                       (format t "FREAD error: ~A~%" e)
-                       (vm-push vm 0)))
-                   (vm-push vm 0))))
-      
-      (FWRITE (let ((value (vm-pop vm))
-                    (stream (vm-pop vm)))
-                (if (streamp stream)
-                    (handler-case
-                        (progn
-                          (print value stream)
-                          (vm-push vm 1))  ; succès
-                      (error (e)
-                        (format t "FWRITE error: ~A~%" e)
-                        (vm-push vm 0)))
-                    (vm-push vm 0))))
-      
-      (READSTR (let ((stream (vm-pop vm)))
-                 (if (streamp stream)
-                     (handler-case
-                         (let ((line (read-line stream nil 'eof)))
-                           (vm-push vm (if (eq line 'eof) 0 line)))
-                       (error (e)
-                         (format t "READSTR error: ~A~%" e)
-                         (vm-push vm 0)))
-                     (vm-push vm 0))))
-      
-      (WRITESTR (let ((string (vm-pop vm))
-                      (stream (vm-pop vm)))
-                  (if (and (streamp stream) (stringp string))
-                      (handler-case
-                          (progn
-                            (write-string string stream)
-                            (vm-push vm 1))  ; succès
-                        (error (e)
-                          (format t "WRITESTR error: ~A~%" e)
-                          (vm-push vm 0)))
-                      (vm-push vm 0))))
-      
-      ;; Manipulation de chaînes
-      (STRCAT (let ((b (vm-pop vm))
-                    (a (vm-pop vm)))
-                (if (and (stringp a) (stringp b))
-                    (vm-push vm (concatenate 'string a b))
-                    (error "STRCAT: arguments doivent être des chaînes"))))
-      
-      (NUMTOSTR (let ((n (vm-pop vm)))
-                  (vm-push vm (write-to-string n))))
-      
-      (SYMTOSTR (let ((sym (vm-pop vm)))
-                  (if (symbolp sym)
-                      (vm-push vm (symbol-name sym))
-                      (vm-push vm (write-to-string sym)))))
       
       ;; Debug
       (PRINT (format t "=> ~A~%" (vm-peek vm)))
