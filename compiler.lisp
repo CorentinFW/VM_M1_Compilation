@@ -1,409 +1,393 @@
-;;;; ============================================================================
-;;;; COMPILATEUR LISP → ASM
-;;;; ============================================================================
-;;;; Compile des expressions LISP vers le langage d'assemblage de la VM
+;;;; Compilateur Lisp vers ASM
+;;;; Compile du code Lisp en instructions assembleur pour la VM
 
-(in-package :cl-user)
-(load "instructions.lisp")
+(defpackage :lisp-compiler
+  (:use :common-lisp)
+  (:export :compile-to-asm
+           :compile-file-to-asm
+           :print-asm
+           :*debug-mode*))
 
-;;; ----------------------------------------------------------------------------
-;;; Structures de données du compilateur
-;;; ----------------------------------------------------------------------------
+(in-package :lisp-compiler)
 
-(defstruct compiler-env
-  "Environnement de compilation"
-  (variables '())              ; Liste des variables locales ((nom . index) ...)
-  (functions (make-hash-table :test 'equal))  ; Table des fonctions
-  (label-counter 0)            ; Compteur pour générer des labels uniques
-  (current-function nil)       ; Fonction en cours de compilation
-  (depth 0)                    ; Profondeur de la pile locale
-  (in-function nil))           ; Indique si on compile dans une fonction (pour LOADARG)
+(defvar *debug-mode* nil "Active les messages de débogage")
+(defvar *label-counter* 0 "Compteur pour générer des labels uniques")
+(defvar *current-env* nil "Environnement de compilation actuel")
 
-;;; ----------------------------------------------------------------------------
+;;; Structure pour représenter l'environnement de compilation
+(defstruct env
+  (vars nil)      ; Liste des variables locales
+  (functions nil) ; Liste des fonctions locales
+  (parent nil))   ; Environnement parent
+
 ;;; Génération de labels uniques
-;;; ----------------------------------------------------------------------------
+(defun gen-label (prefix)
+  "Génère un label unique avec le préfixe donné"
+  (format nil "~A_~D" prefix (incf *label-counter*)))
 
-(defun generate-label (env prefix)
-  "Génère un label unique avec un préfixe"
-  (let ((counter (compiler-env-label-counter env)))
-    (setf (compiler-env-label-counter env) (1+ counter))
-    (intern (format nil "~A_~A" prefix counter) :cl-user)))
+;;; Recherche de variable dans l'environnement
+(defun lookup-var (var env)
+  "Cherche une variable dans l'environnement et retourne son offset"
+  (labels ((search-env (e depth offset)
+             (cond
+               ((null e) nil)
+               ((member var (env-vars e))
+                (list depth (position var (env-vars e))))
+               (t (search-env (env-parent e) (1+ depth) 0)))))
+    (search-env env 0 0)))
 
-;;; ----------------------------------------------------------------------------
-;;; Gestion de l'environnement
-;;; ----------------------------------------------------------------------------
+;;; Ajout de variables à l'environnement
+(defun add-vars (vars env)
+  "Ajoute des variables à l'environnement"
+  (make-env :vars (append vars (env-vars env))
+            :functions (env-functions env)
+            :parent (env-parent env)))
 
-(defun env-lookup-var (env var-name)
-  "Cherche une variable dans l'environnement, retourne son index ou NIL"
-  (cdr (assoc var-name (compiler-env-variables env))))
+;;; Création d'un nouvel environnement
+(defun new-env (&optional parent)
+  "Crée un nouvel environnement avec un parent optionnel"
+  (make-env :parent parent))
 
-(defun env-add-var (env var-name)
-  "Ajoute une variable à l'environnement et retourne son index"
-  (let ((index (length (compiler-env-variables env))))
-    (push (cons var-name index) (compiler-env-variables env))
-    index))
+;;; Instructions ASM
+(defun emit-push (value)
+  `(PUSH ,value))
 
-(defun env-add-vars (env var-names)
-  "Ajoute plusieurs variables à l'environnement"
-  (dolist (var var-names)
-    (env-add-var env var)))
+(defun emit-pop ()
+  `(POP))
 
-;;; ----------------------------------------------------------------------------
-;;; ÉTAPE 7 : Compilation des expressions de base
-;;; ----------------------------------------------------------------------------
+(defun emit-load (depth offset)
+  `(LOAD ,depth ,offset))
 
+(defun emit-store (depth offset)
+  `(STORE ,depth ,offset))
+
+(defun emit-call (label nargs)
+  `(CALL ,label ,nargs))
+
+(defun emit-return ()
+  `(RETURN))
+
+(defun emit-label (label)
+  `(LABEL ,label))
+
+(defun emit-jump (label)
+  `(JUMP ,label))
+
+(defun emit-jump-if-nil (label)
+  `(JUMPNIL ,label))
+
+(defun emit-add ()
+  `(ADD))
+
+(defun emit-sub ()
+  `(SUB))
+
+(defun emit-mul ()
+  `(MUL))
+
+(defun emit-div ()
+  `(DIV))
+
+(defun emit-eq ()
+  `(EQ))
+
+(defun emit-lt ()
+  `(LT))
+
+(defun emit-le ()
+  `(LE))
+
+(defun emit-gt ()
+  `(GT))
+
+(defun emit-ge ()
+  `(GE))
+
+(defun emit-print ()
+  `(PRINT))
+
+(defun emit-halt ()
+  `(HALT))
+
+(defun emit-makeframe (nvars)
+  `(MAKEFRAME ,nvars))
+
+(defun emit-popframe ()
+  `(POPFRAME))
+
+(defun emit-makeclosure (label nvars)
+  `(MAKECLOSURE ,label ,nvars))
+
+;;; Compilation des expressions
 (defun compile-expr (expr env)
-  "Compile une expression LISP en une liste d'instructions ASM"
+  "Compile une expression Lisp en instructions ASM"
   (cond
-    ;; Nombre
+    ;; Constantes
     ((numberp expr)
-     (list (format nil "PUSH ~A" expr)))
+     (list (emit-push expr)))
     
-    ;; Variable
+    ((null expr)
+     (list (emit-push 'NIL)))
+    
+    ((eq expr t)
+     (list (emit-push 'T)))
+    
+    ;; Symboles (variables)
     ((symbolp expr)
-     (let ((index (env-lookup-var env expr)))
-       (if index
-           ;; Si on est dans une fonction, utiliser LOADARG pour les paramètres
-           (if (compiler-env-in-function env)
-               (list (format nil "LOADARG ~A" index))
-               (list (format nil "LOAD ~A" index)))
+     (let ((var-info (lookup-var expr env)))
+       (if var-info
+           (list (emit-load (first var-info) (second var-info)))
            (error "Variable non définie: ~A" expr))))
     
-    ;; Liste (appel de fonction ou forme spéciale)
+    ;; Listes (appels de fonction ou formes spéciales)
     ((listp expr)
-     (cond
-       ;; Expression vide
-       ((null expr) 
-        (list "PUSH 0"))
-       
-       ;; Opérations arithmétiques
-       ((member (car expr) '(+ - * / mod))
-        (compile-arithmetic expr env))
-       
-       ;; Opérations de comparaison
-       ((member (car expr) '(= < <= > >=))
-        (compile-comparison expr env))
-       
-       ;; Structure IF
-       ((eq (car expr) 'if)
-        (compile-if expr env))
-       
-       ;; LET (variables locales)
-       ((eq (car expr) 'let)
-        (compile-let expr env))
-       
-       ;; PROGN (séquence d'expressions)
-       ((eq (car expr) 'progn)
-        (compile-progn expr env))
-       
-       ;; SETQ (affectation)
-       ((eq (car expr) 'setq)
-        (compile-setq expr env))
-       
-       ;; DEFUN (définition de fonction)
-       ((eq (car expr) 'defun)
-        (compile-defun expr env))
-       
-       ;; Appel de fonction
-       (t (compile-call expr env))))
+     (compile-list expr env))
     
-    ;; Type inconnu
-    (t (error "Type d'expression non supporté: ~A" expr))))
+    (t (error "Expression non reconnue: ~A" expr))))
 
-;;; ----------------------------------------------------------------------------
-;;; Compilation des opérations arithmétiques
-;;; ----------------------------------------------------------------------------
-
-(defun compile-arithmetic (expr env)
-  "Compile une opération arithmétique: (+, -, *, /, mod)"
-  (let ((op (car expr))
-        (args (cdr expr)))
+(defun compile-list (expr env)
+  "Compile une liste (appel de fonction ou forme spéciale)"
+  (let ((op (car expr)))
     (cond
-      ;; Pas d'arguments
-      ((null args)
-       (error "Opération ~A sans arguments" op))
+      ;; Formes spéciales
+      ((eq op 'quote)
+       (compile-quote (cadr expr) env))
       
-      ;; Un seul argument
-      ((null (cdr args))
-       (case op
-         (+ (compile-expr (car args) env))
-         (- (append (compile-expr (car args) env)
-                   (list "PUSH 0"
-                         "PUSH 0"
-                         "ROT"
-                         "SUB")))
-         (* (compile-expr (car args) env))
-         (/ (error "Division avec un seul argument non supportée"))
-         (mod (error "Modulo avec un seul argument non supporté"))))
+      ((eq op 'if)
+       (compile-if (cadr expr) (caddr expr) (cadddr expr) env))
       
-      ;; Deux arguments ou plus
-      (t
-       (let ((result (compile-expr (car args) env)))
-         (dolist (arg (cdr args))
-           (setf result (append result 
-                               (compile-expr arg env)
-                               (list (arithmetic-op-to-instruction op)))))
-         result)))))
+      ((eq op 'let)
+       (compile-let (cadr expr) (cddr expr) env))
+      
+      ((eq op 'defun)
+       (compile-defun (cadr expr) (caddr expr) (cadddr expr) env))
+      
+      ((eq op 'lambda)
+       (compile-lambda (cadr expr) (cddr expr) env))
+      
+      ((eq op 'labels)
+       (compile-labels (cadr expr) (cddr expr) env))
+      
+      ((eq op 'loop)
+       (compile-loop (cdr expr) env))
+      
+      ((eq op 'return)
+       (append (compile-expr (cadr expr) env)
+               (list (emit-return))))
+      
+      ;; Opérateurs arithmétiques
+      ((member op '(+ - * /))
+       (compile-binop op (cadr expr) (caddr expr) env))
+      
+      ;; Opérateurs de comparaison
+      ((member op '(= < <= > >=))
+       (compile-comparison op (cadr expr) (caddr expr) env))
+      
+      ;; Print
+      ((eq op 'print)
+       (append (compile-expr (cadr expr) env)
+               (list (emit-print))))
+      
+      ;; Funcall - appel d'une fermeture
+      ((eq op 'funcall)
+       (compile-funcall-closure (cadr expr) (cddr expr) env))
+      
+      ;; Appel de fonction
+      (t (compile-funcall op (cdr expr) env)))))
 
-(defun arithmetic-op-to-instruction (op)
-  "Convertit un opérateur arithmétique en instruction"
-  (case op
-    (+ "ADD")
-    (- "SUB")
-    (* "MUL")
-    (/ "DIV")
-    (mod "MOD")
-    (t (error "Opérateur arithmétique inconnu: ~A" op))))
+(defun compile-quote (expr env)
+  "Compile une expression quotée"
+  (declare (ignore env))
+  (list (emit-push expr)))
 
-;;; ----------------------------------------------------------------------------
-;;; Compilation des opérations de comparaison
-;;; ----------------------------------------------------------------------------
-
-(defun compile-comparison (expr env)
-  "Compile une opération de comparaison: (=, <, <=, >, >=)"
-  (let ((op (car expr))
-        (args (cdr expr)))
-    (unless (= (length args) 2)
-      (error "L'opération ~A nécessite exactement 2 arguments" op))
-    
-    (append (compile-expr (car args) env)
-            (compile-expr (cadr args) env)
-            (list (comparison-op-to-instruction op)))))
-
-(defun comparison-op-to-instruction (op)
-  "Convertit un opérateur de comparaison en instruction"
-  (case op
-    (= "EQ")
-    (< "LT")
-    (<= "LE")
-    (> "GT")
-    (>= "GE")
-    (t (error "Opérateur de comparaison inconnu: ~A" op))))
-
-;;; ----------------------------------------------------------------------------
-;;; ÉTAPE 8 : Compilation de IF
-;;; ----------------------------------------------------------------------------
-
-(defun compile-if (expr env)
-  "Compile une expression IF: (if test then else)"
-  (let ((test (cadr expr))
-        (then-expr (caddr expr))
-        (else-expr (cadddr expr))
-        (label-else (generate-label env "ELSE"))
-        (label-end (generate-label env "ENDIF")))
-    
+(defun compile-if (test then else env)
+  "Compile une expression if"
+  (let ((else-label (gen-label "ELSE"))
+        (end-label (gen-label "ENDIF")))
     (append
-     ;; Compiler le test
      (compile-expr test env)
-     ;; Sauter vers ELSE si faux (sommet == 0)
-     (list (format nil "JUMPNIF ~A" label-else))
-     ;; Compiler la branche THEN
-     (compile-expr then-expr env)
-     ;; Sauter vers la fin
-     (list (format nil "JUMP ~A" label-end))
-     ;; Label ELSE
-     (list (format nil "~A:" label-else))
-     ;; Compiler la branche ELSE (ou PUSH 0 si absent)
-     (if else-expr
-         (compile-expr else-expr env)
-         (list "PUSH 0"))
-     ;; Label END
-     (list (format nil "~A:" label-end)))))
+     (list (emit-jump-if-nil else-label))
+     (compile-expr then env)
+     (list (emit-jump end-label))
+     (list (emit-label else-label))
+     (if else
+         (compile-expr else env)
+         (list (emit-push 'NIL)))
+     (list (emit-label end-label)))))
 
-;;; ----------------------------------------------------------------------------
-;;; ÉTAPE 8 : Compilation de LET
-;;; ----------------------------------------------------------------------------
-
-(defun compile-let (expr env)
-  "Compile une expression LET: (let ((var1 val1) (var2 val2) ...) body...)"
-  (let* ((bindings (cadr expr))
-         (body (cddr expr))
-         (new-env (copy-compiler-env env))
-         (n-vars (length bindings)))
-    
-    ;; Allouer l'espace pour les variables locales
-    (let ((result (if (> n-vars 0)
-                      (list (format nil "ALLOC ~A" n-vars))
-                      '())))
-      
-      ;; Compiler chaque binding et stocker dans les variables
-      (dolist (binding bindings)
-        (let* ((var-name (car binding))
-               (var-value (cadr binding))
-               (var-index (env-add-var new-env var-name)))
-          (setf result (append result
-                              (compile-expr var-value env)
-                              (list (format nil "STORE ~A" var-index))))))
-      
-      ;; Compiler le corps
-      (dolist (expr-body body)
-        (setf result (append result (compile-expr expr-body new-env))))
-      
-      ;; Désallouer les variables locales
-      (when (> n-vars 0)
-        (setf result (append result (list (format nil "DEALLOC ~A" n-vars)))))
-      
-      result)))
-
-;;; ----------------------------------------------------------------------------
-;;; Compilation de PROGN
-;;; ----------------------------------------------------------------------------
-
-(defun compile-progn (expr env)
-  "Compile une séquence d'expressions PROGN"
-  (let ((result '())
-        (body (cdr expr))
-        (shared-env env))  ; Partager l'environnement entre toutes les expressions
-    (dolist (e body)
-      ;; Utiliser shared-env pour que les fonctions définies soient disponibles
-      (setf result (append result (compile-expr e shared-env))))
-    result))
-
-;;; ----------------------------------------------------------------------------
-;;; Compilation de SETQ
-;;; ----------------------------------------------------------------------------
-
-(defun compile-setq (expr env)
-  "Compile une affectation SETQ: (setq var value)"
-  (let ((var-name (cadr expr))
-        (value (caddr expr)))
-    (let ((index (env-lookup-var env var-name)))
-      (unless index
-        (error "Variable non définie: ~A" var-name))
-      (append (compile-expr value env)
-              (list (format nil "STORE ~A" index))))))
-
-;;; ----------------------------------------------------------------------------
-;;; ÉTAPE 9 : Compilation des fonctions (DEFUN)
-;;; ----------------------------------------------------------------------------
-
-(defun compile-defun (expr env)
-  "Compile une définition de fonction: (defun nom (params...) body...)"
-  (let* ((func-name (cadr expr))
-         (params (caddr expr))
-         (body (cdddr expr))
-         (func-label (intern (format nil "FUNC_~A" func-name) :cl-user))
-         (end-label (generate-label env "END_DEFUN"))
-         (new-env (make-compiler-env :in-function t)))  ; Activer le mode fonction
-    
-    ;; Enregistrer la fonction dans l'environnement AVANT de compiler le corps
-    ;; pour supporter la récursivité
-    (setf (gethash func-name (compiler-env-functions env)) func-label)
-    
-    ;; Copier aussi les fonctions déjà définies dans le nouvel environnement
-    ;; pour supporter les appels entre fonctions
-    (maphash (lambda (k v) 
-               (setf (gethash k (compiler-env-functions new-env)) v))
-             (compiler-env-functions env))
-    
-    ;; Ajouter les paramètres à l'environnement de la fonction
-    ;; Les paramètres sont accessibles via LOADARG
-    (let ((param-index 0))
-      (dolist (param params)
-        (push (cons param param-index) (compiler-env-variables new-env))
-        (incf param-index)))
-    
+(defun compile-let (bindings body env)
+  "Compile une expression let"
+  (let* ((vars (mapcar #'car bindings))
+         (vals (mapcar #'cadr bindings))
+         (new-env (add-vars vars env))
+         (nvars (length vars)))
     (append
-     ;; Sauter par-dessus la définition de fonction
-     (list (format nil "JUMP ~A" end-label))
-     ;; Label de la fonction
-     (list (format nil "~A:" func-label))
-     ;; Compiler le corps de la fonction
-     (compile-function-body body new-env)
-     ;; Retour de fonction
-     (list "RET")
-     ;; Label de fin
-     (list (format nil "~A:" end-label)))))
+     (list (emit-makeframe nvars))
+     ;; Compiler les valeurs et les stocker
+     (loop for val in vals
+           for i from 0
+           append (append (compile-expr val env)
+                         (list (emit-store 0 i))))
+     ;; Compiler le corps
+     (loop for expr in body
+           append (compile-expr expr new-env))
+     (list (emit-popframe)))))
 
-(defun compile-function-body (body env)
-  "Compile le corps d'une fonction"
-  (let ((result '()))
-    (dolist (expr body)
-      (setf result (append result (compile-expr expr env))))
-    result))
+(defun compile-defun (name params body env)
+  "Compile une définition de fonction"
+  (let* ((label (format nil "FN_~A" name))
+         (end-label (gen-label "END_DEFUN"))
+         (new-env (add-vars params (new-env env)))
+         (compiled-body (compile-expr body new-env)))
+    (append
+     ;; Sauter par-dessus le code de la fonction
+     (list (emit-jump end-label))
+     ;; Début de la fonction
+     (list (emit-label label))
+     compiled-body
+     (list (emit-return))
+     ;; Fin de la définition
+     (list (emit-label end-label))
+     ;; Retourner NIL pour la définition elle-même
+     (list (emit-push 'NIL)))))
 
-;;; ----------------------------------------------------------------------------
-;;; Compilation d'appels de fonction
-;;; ----------------------------------------------------------------------------
+(defun compile-lambda (params body env)
+  "Compile une expression lambda (fermeture)"
+  (let* ((label (gen-label "LAMBDA"))
+         (skip-label (gen-label "SKIP_LAMBDA"))
+         ;; Identifier les variables libres
+         (free-vars (find-free-vars body params env))
+         (nfree (length free-vars))
+         ;; Créer un nouvel environnement avec variables libres + paramètres
+         (new-env (add-vars (append free-vars params) (new-env env))))
+    (append
+     ;; Pousser les valeurs des variables libres sur la pile
+     (loop for var in free-vars
+           append (compile-expr var env))
+     ;; Créer la fermeture avec le label et le nombre de variables capturées
+     (list (emit-makeclosure label nfree))
+     ;; Sauter par-dessus le code de la fonction
+     (list (emit-jump skip-label))
+     ;; Code de la fonction
+     (list (emit-label label))
+     ;; Compiler le corps avec le nouvel environnement
+     (loop for expr in body
+           append (compile-expr expr new-env))
+     (list (emit-return))
+     (list (emit-label skip-label)))))
 
-(defun compile-call (expr env)
-  "Compile un appel de fonction: (func arg1 arg2 ...)"
-  (let ((func-name (car expr))
-        (args (cdr expr)))
-    
-    ;; Vérifier que la fonction existe
-    (let ((func-label (gethash func-name (compiler-env-functions env))))
-      (unless func-label
-        (error "Fonction non définie: ~A" func-name))
-      
-      ;; Compiler les arguments dans l'ordre inverse (ils seront dépilés dans l'ordre)
-      (let ((result '()))
-        (dolist (arg (reverse args))
-          (setf result (append result (compile-expr arg env))))
-        
-        ;; Ajouter le nombre d'arguments sur la pile
-        (setf result (append result (list (format nil "PUSH ~A" (length args)))))
-        
-        ;; Appeler la fonction
-        (append result (list (format nil "CALL ~A" func-label)))))))
+(defun find-free-vars (body params env)
+  "Trouve les variables libres dans le corps d'une lambda"
+  (labels ((find-vars (expr)
+             (cond
+               ((symbolp expr)
+                (if (and (not (member expr params))
+                        (lookup-var expr env))
+                    (list expr)
+                    nil))
+               ((atom expr) nil)
+               ((eq (car expr) 'quote) nil)
+               ((eq (car expr) 'lambda)
+                ;; Ne pas descendre dans les lambdas imbriquées
+                nil)
+               (t (remove-duplicates
+                   (apply #'append (mapcar #'find-vars expr)))))))
+    (remove-duplicates (apply #'append (mapcar #'find-vars body)))))
 
-;;; ----------------------------------------------------------------------------
-;;; Fonction principale de compilation
-;;; ----------------------------------------------------------------------------
+(defun compile-labels (bindings body env)
+  "Compile des fonctions locales avec labels"
+  (let* ((fn-names (mapcar #'car bindings))
+         (new-env (make-env :functions fn-names :parent env)))
+    (append
+     ;; Compiler chaque fonction locale
+     (loop for (name params . fn-body) in bindings
+           append (compile-defun name params (car fn-body) new-env))
+     ;; Compiler le corps
+     (loop for expr in body
+           append (compile-expr expr new-env)))))
 
-(defun compile-lisp (expr &optional (env (make-compiler-env)))
-  "Compile une expression LISP complète et retourne du code ASM"
-  (let ((instructions (compile-expr expr env)))
-    ;; Ajouter HALT à la fin
-    (append instructions (list "HALT"))))
+(defun compile-loop (body env)
+  "Compile une boucle loop"
+  (let ((start-label (gen-label "LOOP_START"))
+        (end-label (gen-label "LOOP_END")))
+    (append
+     (list (emit-label start-label))
+     (loop for expr in body
+           append (compile-expr expr env))
+     (list (emit-jump start-label))
+     (list (emit-label end-label)))))
 
-(defun compile-lisp-to-string (expr)
-  "Compile une expression LISP et retourne une chaîne ASM"
-  (let ((instructions (compile-lisp expr)))
-    (format nil "~{~A~%~}" instructions)))
+(defun compile-binop (op arg1 arg2 env)
+  "Compile une opération binaire"
+  (append
+   (compile-expr arg1 env)
+   (compile-expr arg2 env)
+   (list (case op
+           (+ (emit-add))
+           (- (emit-sub))
+           (* (emit-mul))
+           (/ (emit-div))))))
 
-(defun compile-lisp-to-file (expr filename)
-  "Compile une expression LISP et sauvegarde dans un fichier ASM"
-  (with-open-file (stream filename 
-                          :direction :output 
-                          :if-exists :supersede
-                          :if-does-not-exist :create)
-    (dolist (instr (compile-lisp expr))
-      (format stream "~A~%" instr))))
+(defun compile-comparison (op arg1 arg2 env)
+  "Compile une comparaison"
+  (append
+   (compile-expr arg1 env)
+   (compile-expr arg2 env)
+   (list (case op
+           (= (emit-eq))
+           (< (emit-lt))
+           (<= (emit-le))
+           (> (emit-gt))
+           (>= (emit-ge))))))
 
-;;; ----------------------------------------------------------------------------
-;;; Fonction pratique : compiler et exécuter
-;;; ----------------------------------------------------------------------------
+(defun compile-funcall (fn args env)
+  "Compile un appel de fonction"
+  (let ((nargs (length args)))
+    (append
+     ;; Compiler les arguments (de droite à gauche)
+     (loop for arg in (reverse args)
+           append (compile-expr arg env))
+     ;; Appeler la fonction
+     (list (emit-call (if (symbolp fn)
+                          (format nil "FN_~A" fn)
+                          fn)
+                      nargs)))))
 
-(defun compile-and-run (expr &key debug)
-  "Compile une expression LISP et l'exécute directement"
-  (load "loader.lisp")
-  (let ((asm-code (compile-lisp-to-string expr)))
-    (format t "=== Code ASM généré ===~%~A~%=====================~%~%" asm-code)
-    (load-and-run-asm-string asm-code :debug debug)))
+(defun compile-funcall-closure (closure-expr args env)
+  "Compile un appel de fermeture via funcall"
+  (let ((nargs (length args)))
+    (append
+     ;; Compiler les arguments
+     (loop for arg in (reverse args)
+           append (compile-expr arg env))
+     ;; Compiler l'expression de fermeture
+     (compile-expr closure-expr env)
+     ;; Appeler la fermeture
+     (list (emit-callclosure nargs)))))
 
-;;; ----------------------------------------------------------------------------
-;;; Utilitaire pour copier l'environnement
-;;; ----------------------------------------------------------------------------
+(defun emit-callclosure (nargs)
+  `(CALLCLOSURE ,nargs))
 
-(defun copy-compiler-env (env)
-  "Copie un environnement de compilation"
-  (make-compiler-env
-   :variables (copy-list (compiler-env-variables env))
-   :functions (let ((new-table (make-hash-table :test 'equal)))
-                (maphash (lambda (k v) (setf (gethash k new-table) v))
-                        (compiler-env-functions env))
-                new-table)
-   :label-counter (compiler-env-label-counter env)
-   :current-function (compiler-env-current-function env)
-   :depth (compiler-env-depth env)
-   :in-function (compiler-env-in-function env)))
+;;; Interface principale
+(defun compile-to-asm (expr)
+  "Compile une expression Lisp en ASM"
+  (setf *label-counter* 0)
+  (let ((env (new-env)))
+    (append (compile-expr expr env)
+            (list (emit-halt)))))
 
-;;; ----------------------------------------------------------------------------
-;;; Export des symboles
-;;; ----------------------------------------------------------------------------
+(defun compile-file-to-asm (input-file output-file)
+  "Compile un fichier Lisp en fichier ASM"
+  (with-open-file (in input-file :direction :input)
+    (with-open-file (out output-file :direction :output
+                         :if-exists :supersede)
+      (loop for expr = (read in nil :eof)
+            until (eq expr :eof)
+            do (let ((asm (compile-to-asm expr)))
+                 (dolist (instr asm)
+                   (print instr out)))))))
 
-(export '(compile-lisp compile-lisp-to-string compile-lisp-to-file
-          compile-and-run make-compiler-env))
-
-(format t "Compilateur LISP → ASM chargé avec succès!~%")
+(defun print-asm (instructions)
+  "Affiche les instructions ASM de manière lisible"
+  (dolist (instr instructions)
+    (format t "~A~%" instr)))

@@ -1,293 +1,338 @@
-;;;; ============================================================================
-;;;; MACHINE VIRTUELLE (VM)
-;;;; ============================================================================
-;;;; Implémentation de la machine virtuelle qui exécute le bytecode
+;;;; Machine Virtuelle
+;;;; Interprète les instructions ASM produites par le compilateur
 
-(in-package :cl-user)
-(load "instructions.lisp")
+(defpackage :vm
+  (:use :common-lisp)
+  (:export :make-vm
+           :vm-run
+           :vm-load-program
+           :vm-reset
+           :vm-step
+           :*debug-vm*))
 
-;;; ----------------------------------------------------------------------------
-;;; Structure de la machine virtuelle
-;;; ----------------------------------------------------------------------------
+(in-package :vm)
 
+(defvar *debug-vm* nil "Active le mode debug de la VM")
+
+;;; Structure de la VM
 (defstruct vm
-  "Machine virtuelle avec pile, environnement et code"
-  (code #() :type vector)           ; Tableau d'instructions
-  (pc 0 :type integer)               ; Program Counter (pointeur d'instruction)
-  (stack '())                        ; Pile d'exécution (liste)
-  (env (make-hash-table))            ; Environnement (variables) - hash table
-  (locals '())                       ; Variables locales (liste de frames)
-  (call-stack '())                   ; Pile d'appels
-  (heap '())                         ; Tas pour les fermetures
-  (halt nil :type boolean)           ; Flag d'arrêt
-  (debug nil :type boolean))         ; Mode debug
+  (stack nil)              ; Pile d'exécution
+  (frames nil)             ; Pile des frames (environnements)
+  (pc 0)                   ; Program counter
+  (program nil)            ; Programme chargé
+  (labels nil)             ; Table des labels
+  (running t))             ; État d'exécution
 
-;;; ----------------------------------------------------------------------------
-;;; Gestion de la pile
-;;; ----------------------------------------------------------------------------
+;;; Structure pour les frames (environnements d'exécution)
+(defstruct frame
+  (vars nil)               ; Variables locales
+  (return-pc nil))         ; Adresse de retour
 
+;;; Opérations sur la pile
 (defun vm-push (vm value)
-  "Empile une valeur sur la pile de la VM"
+  "Empile une valeur sur la pile"
   (push value (vm-stack vm)))
 
 (defun vm-pop (vm)
-  "Dépile et retourne la valeur au sommet de la pile"
-  (if (null (vm-stack vm))
-      (error "Stack underflow: tentative de dépiler une pile vide")
-      (pop (vm-stack vm))))
+  "Dépile une valeur de la pile"
+  (if (vm-stack vm)
+      (pop (vm-stack vm))
+      (error "Stack underflow")))
 
-(defun vm-peek (vm)
-  "Retourne la valeur au sommet sans dépiler"
-  (if (null (vm-stack vm))
-      (error "Stack underflow: pile vide")
-      (car (vm-stack vm))))
+(defun vm-top (vm)
+  "Retourne la valeur au sommet de la pile sans la dépiler"
+  (if (vm-stack vm)
+      (car (vm-stack vm))
+      (error "Stack empty")))
 
-(defun vm-dup (vm)
-  "Duplique le sommet de la pile"
-  (let ((top (vm-peek vm)))
-    (vm-push vm top)))
+;;; Gestion des frames
+(defun vm-push-frame (vm nvars)
+  "Crée un nouveau frame avec nvars variables"
+  (let ((frame (make-frame :vars (make-array nvars :initial-element nil)
+                          :return-pc (vm-pc vm))))
+    (push frame (vm-frames vm))))
 
-;;; ----------------------------------------------------------------------------
-;;; Gestion de l'environnement et des variables
-;;; ----------------------------------------------------------------------------
+(defun vm-pop-frame (vm)
+  "Retire le frame courant"
+  (if (vm-frames vm)
+      (pop (vm-frames vm))
+      (error "No frame to pop")))
 
-(defun vm-store-var (vm index value)
-  "Sauvegarde une valeur dans une variable globale"
-  (setf (gethash index (vm-env vm)) value))
+(defun vm-current-frame (vm)
+  "Retourne le frame courant"
+  (car (vm-frames vm)))
 
-(defun vm-load-var (vm index)
-  "Charge une variable globale"
-  (multiple-value-bind (value found) (gethash index (vm-env vm))
-    (if found
-        value
-        (error "Variable non définie: ~A" index))))
+(defun vm-get-frame (vm depth)
+  "Récupère un frame à une profondeur donnée"
+  (nth depth (vm-frames vm)))
 
-(defun vm-alloc-locals (vm n)
-  "Alloue un nouveau frame de n variables locales"
-  (let ((frame (make-array n :initial-element nil)))
-    (push frame (vm-locals vm))))
+;;; Accès aux variables
+(defun vm-load-var (vm depth offset)
+  "Charge une variable depuis un frame"
+  (let ((frame (vm-get-frame vm depth)))
+    (if frame
+        (let ((vars (frame-vars frame)))
+          (if (and (< offset (length vars)))
+              (aref vars offset)
+              (error "Variable offset out of bounds: ~A" offset)))
+        (error "Frame depth out of bounds: ~A" depth))))
 
-(defun vm-dealloc-locals (vm n)
-  "Désalloue le frame de variables locales"
-  (declare (ignore n))
-  (if (vm-locals vm)
-      (pop (vm-locals vm))
-      (error "Aucun frame local à désallouer")))
+(defun vm-store-var (vm depth offset value)
+  "Stocke une valeur dans une variable"
+  (let ((frame (vm-get-frame vm depth)))
+    (if frame
+        (let ((vars (frame-vars frame)))
+          (if (< offset (length vars))
+              (setf (aref vars offset) value)
+              (error "Variable offset out of bounds: ~A" offset)))
+        (error "Frame depth out of bounds: ~A" depth))))
 
-(defun vm-load-local (vm index)
-  "Charge une variable locale du frame courant"
-  (if (vm-locals vm)
-      (let ((frame (car (vm-locals vm))))
-        (if (< index (length frame))
-            (aref frame index)
-            (error "Index local hors limite: ~A" index)))
-      (error "Aucun frame local")))
+;;; Recherche de labels
+(defun vm-find-label (vm label)
+  "Trouve l'adresse d'un label"
+  (let ((addr (gethash label (vm-labels vm))))
+    (if addr
+        addr
+        (error "Label non trouvé: ~A" label))))
 
-(defun vm-store-local (vm index value)
-  "Sauvegarde dans une variable locale du frame courant"
-  (if (vm-locals vm)
-      (let ((frame (car (vm-locals vm))))
-        (if (< index (length frame))
-            (setf (aref frame index) value)
-            (error "Index local hors limite: ~A" index)))
-      (error "Aucun frame local")))
-
-;;; ----------------------------------------------------------------------------
-;;; Gestion de la pile d'appels
-;;; ----------------------------------------------------------------------------
-
-(defstruct call-frame
-  "Frame d'appel de fonction"
-  (return-address 0 :type integer)   ; Adresse de retour
-  (args '()))                        ; Arguments de la fonction
-
-(defun vm-call (vm address args)
-  "Appelle une fonction à l'adresse donnée avec des arguments"
-  (let ((frame (make-call-frame 
-                :return-address (1+ (vm-pc vm))  ; Sauvegarder PC+1 pour retourner après CALL
-                :args args)))
-    (push frame (vm-call-stack vm))
-    (setf (vm-pc vm) address)))
-
-(defun vm-return (vm)
-  "Retourne d'un appel de fonction"
-  (if (null (vm-call-stack vm))
-      (progn
-        (setf (vm-halt vm) t)  ; Plus d'appels, on arrête
-        (vm-pc vm))
-      (let* ((frame (pop (vm-call-stack vm)))
-             (return-addr (call-frame-return-address frame)))
-        (setf (vm-pc vm) return-addr))))
-
-(defun vm-load-arg (vm index)
-  "Charge un argument de la fonction courante"
-  (if (null (vm-call-stack vm))
-      (error "Aucun frame d'appel")
-      (let* ((frame (car (vm-call-stack vm)))
-             (args (call-frame-args frame)))
-        (if (< index (length args))
-            (nth index args)
-            (error "Index d'argument hors limite: ~A" index)))))
-
-;;; ----------------------------------------------------------------------------
 ;;; Exécution des instructions
-;;; ----------------------------------------------------------------------------
-
 (defun vm-execute-instruction (vm instr)
   "Exécute une instruction"
-  (let ((opcode (instruction-opcode instr))
-        (operand (instruction-operand instr)))
-    
-    (case (mnemonic-from-opcode opcode)
-      ;; Contrôle
-      (HALT (setf (vm-halt vm) t))
-      (NOP nil)
+  (when *debug-vm*
+    (format t "PC=~A: ~A | Stack: ~A~%" 
+            (vm-pc vm) instr (vm-stack vm)))
+  
+  (let ((opcode-name (symbol-name (car instr)))
+        (operands (cdr instr)))
+    (cond
+      ;; Opérations de pile
+      ((string= opcode-name "PUSH")
+       (vm-push vm (car operands))
+       (incf (vm-pc vm)))
       
-      ;; Pile
-      (PUSH (vm-push vm operand))
-      (POP (vm-pop vm))
-      (DUP (vm-dup vm))
+      ((string= opcode-name "POP")
+       (vm-pop vm)
+       (incf (vm-pc vm)))
       
-      ;; Arithmétique
-      (ADD (let ((b (vm-pop vm))
-                 (a (vm-pop vm)))
-             (vm-push vm (+ a b))))
-      (SUB (let ((b (vm-pop vm))
-                 (a (vm-pop vm)))
-             (vm-push vm (- a b))))
-      (MUL (let ((b (vm-pop vm))
-                 (a (vm-pop vm)))
-             (vm-push vm (* a b))))
-      (DIV (let ((b (vm-pop vm))
-                 (a (vm-pop vm)))
-             (when (zerop b)
-               (error "Division par zéro"))
+      ;; Opérations de mémoire
+      ((string= opcode-name "LOAD")
+       (let ((depth (first operands))
+             (offset (second operands)))
+         (vm-push vm (vm-load-var vm depth offset)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "STORE")
+       (let ((depth (first operands))
+             (offset (second operands))
+             (value (vm-pop vm)))
+         (vm-store-var vm depth offset value))
+       (incf (vm-pc vm)))
+      
+      ;; Opérations arithmétiques
+      ((string= opcode-name "ADD")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (+ a b)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "SUB")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (- a b)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "MUL")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (* a b)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "DIV")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (if (zerop b)
+             (error "Division par zéro")
              (vm-push vm (floor a b))))
-      (MOD (let ((b (vm-pop vm))
-                 (a (vm-pop vm)))
-             (vm-push vm (mod a b))))
+       (incf (vm-pc vm)))
       
-      ;; Comparaisons
-      (EQ (let ((b (vm-pop vm))
-                (a (vm-pop vm)))
-            (vm-push vm (if (= a b) 1 0))))
-      (LT (let ((b (vm-pop vm))
-                (a (vm-pop vm)))
-            (vm-push vm (if (< a b) 1 0))))
-      (LE (let ((b (vm-pop vm))
-                (a (vm-pop vm)))
-            (vm-push vm (if (<= a b) 1 0))))
-      (GT (let ((b (vm-pop vm))
-                (a (vm-pop vm)))
-            (vm-push vm (if (> a b) 1 0))))
-      (GE (let ((b (vm-pop vm))
-                (a (vm-pop vm)))
-            (vm-push vm (if (>= a b) 1 0))))
+      ;; Opérations de comparaison
+      ((string= opcode-name "EQ")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (if (= a b) 'T 'NIL)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "LT")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (if (< a b) 'T 'NIL)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "LE")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (if (<= a b) 'T 'NIL)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "GT")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (if (> a b) 'T 'NIL)))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "GE")
+       (let ((b (vm-pop vm))
+             (a (vm-pop vm)))
+         (vm-push vm (if (>= a b) 'T 'NIL)))
+       (incf (vm-pc vm)))
       
       ;; Contrôle de flux
-      (JUMP (setf (vm-pc vm) operand)
-            (return-from vm-execute-instruction))
-      (JUMPIF (let ((cond (vm-pop vm)))
-                (when (/= cond 0)
-                  (setf (vm-pc vm) operand)
-                  (return-from vm-execute-instruction))))
-      (JUMPNIF (let ((cond (vm-pop vm)))
-                 (when (= cond 0)
-                   (setf (vm-pc vm) operand)
-                   (return-from vm-execute-instruction))))
-      (CALL (let ((n-args (vm-pop vm))  ; Nombre d'arguments
-                  (args '()))
-              (dotimes (i n-args)
-                (push (vm-pop vm) args))
-              ;; Les arguments sont maintenant dans l'ordre inverse, on les remet dans le bon ordre
-              (vm-call vm operand (nreverse args))
-              (return-from vm-execute-instruction)))
-      (RET (vm-return vm)
-           (return-from vm-execute-instruction))
+      ((string= opcode-name "JUMP")
+       (setf (vm-pc vm) (vm-find-label vm (car operands))))
       
-      ;; Variables
-      (LOAD (vm-push vm (vm-load-var vm operand)))
-      (STORE (let ((value (vm-pop vm)))
-               (vm-store-var vm operand value)))
-      (LOADARG (vm-push vm (vm-load-arg vm operand)))
-      (ALLOC (vm-alloc-locals vm operand))
-      (DEALLOC (vm-dealloc-locals vm operand))
+      ((string= opcode-name "JUMPNIL")
+       (let ((value (vm-pop vm)))
+         (if (or (null value) (eq value 'NIL))
+             (setf (vm-pc vm) (vm-find-label vm (car operands)))
+             (incf (vm-pc vm)))))
       
-      ;; Debug
-      (PRINT (format t "=> ~A~%" (vm-peek vm)))
+      ;; Contrôle de flux - appels de fonction
+      ((string= opcode-name "CALL")
+       (let* ((label (first operands))
+              (nargs (second operands))
+              (args (loop repeat nargs collect (vm-pop vm))))
+         ;; Créer un nouveau frame pour l'appel
+         (vm-push-frame vm nargs)
+         ;; Stocker les arguments dans le nouveau frame
+         (loop for arg in args
+               for i from 0
+               do (vm-store-var vm 0 i arg))
+         ;; Sauvegarder l'adresse de retour
+         (setf (frame-return-pc (vm-current-frame vm)) (1+ (vm-pc vm)))
+         ;; Sauter à la fonction
+         (setf (vm-pc vm) (vm-find-label vm label))))
       
-      (otherwise (error "Instruction inconnue: opcode ~A" opcode)))
-    
-    ;; Incrémenter le PC (sauf si déjà modifié par JUMP/CALL/RET)
-    (incf (vm-pc vm))))
+      ((string= opcode-name "RETURN")
+       (let ((return-value (if (vm-stack vm) (vm-pop vm) nil)))
+         (if (vm-frames vm)
+             ;; Il y a un frame, retour normal
+             (let ((return-pc (frame-return-pc (vm-current-frame vm))))
+               (vm-pop-frame vm)
+               (when return-value
+                 (vm-push vm return-value))
+               (if return-pc
+                   (setf (vm-pc vm) return-pc)
+                   (setf (vm-running vm) nil)))
+             ;; Pas de frame, arrêt de la VM
+             (progn
+               (when return-value
+                 (vm-push vm return-value))
+               (setf (vm-running vm) nil)))))
+      
+      ;; Gestion des frames
+      ((string= opcode-name "MAKEFRAME")
+       (vm-push-frame vm (car operands))
+       (incf (vm-pc vm)))
+      
+      ((string= opcode-name "POPFRAME")
+       ;; Sauvegarder la valeur de retour
+       (let ((return-value (if (vm-stack vm) (vm-pop vm) nil)))
+         (vm-pop-frame vm)
+         (when return-value
+           (vm-push vm return-value)))
+       (incf (vm-pc vm)))
+      
+      ;; Fermetures
+      ((string= opcode-name "MAKECLOSURE")
+       (let ((label (first operands))
+             (nfree (second operands)))
+         ;; Dépiler les variables capturées
+         (let ((captured-vars (loop repeat nfree collect (vm-pop vm))))
+           ;; Créer la fermeture avec l'environnement capturé
+           (vm-push vm (list 'CLOSURE label (nreverse captured-vars)))))
+       (incf (vm-pc vm)))
+      
+      ;; Appel de fermeture
+      ((string= opcode-name "CALLCLOSURE")
+       (let* ((nargs (car operands))
+              ;; Récupérer la fermeture
+              (closure (vm-pop vm))
+              ;; Récupérer les arguments
+              (args (loop repeat nargs collect (vm-pop vm))))
+         (unless (and (listp closure) (eq (car closure) 'CLOSURE))
+           (error "Tentative d'appel sur une non-fermeture: ~A" closure))
+         (let ((label (second closure))
+               (captured-vars (third closure)))
+           ;; Créer un frame avec les variables capturées + les arguments
+           (vm-push-frame vm (+ (length captured-vars) nargs))
+           ;; Stocker d'abord les variables capturées
+           (loop for var in captured-vars
+                 for i from 0
+                 do (vm-store-var vm 0 i var))
+           ;; Puis les arguments
+           (loop for arg in args
+                 for i from (length captured-vars)
+                 do (vm-store-var vm 0 i arg))
+           ;; Sauvegarder l'adresse de retour
+           (setf (frame-return-pc (vm-current-frame vm)) (1+ (vm-pc vm)))
+           ;; Sauter à la fonction
+           (setf (vm-pc vm) (vm-find-label vm label)))))
+      
+      ;; Affichage
+      ((string= opcode-name "PRINT")
+       (format t "~A~%" (vm-pop vm))
+       (incf (vm-pc vm)))
+      
+      ;; Arrêt
+      ((string= opcode-name "HALT")
+       (setf (vm-running vm) nil))
+      
+      (t
+       (error "Instruction inconnue: ~A" opcode-name)))))
 
-;;; ----------------------------------------------------------------------------
-;;; Boucle d'exécution principale (Fetch-Decode-Execute)
-;;; ----------------------------------------------------------------------------
+;;; Chargement et exécution
+(defun vm-load-program (vm program labels)
+  "Charge un programme dans la VM"
+  (setf (vm-program vm) (coerce program 'vector))
+  (setf (vm-labels vm) labels)
+  (setf (vm-pc vm) 0)
+  (setf (vm-running vm) t))
 
-(defun vm-print-state (vm)
-  "Affiche l'état de la VM (mode debug)"
-  (format t "~%--- État VM ---~%")
-  (format t "PC: ~A~%" (vm-pc vm))
-  (format t "Stack: ~A~%" (vm-stack vm))
-  (format t "Locals: ~A frames~%" (length (vm-locals vm)))
-  (format t "Call-stack: ~A frames~%" (length (vm-call-stack vm)))
-  (when (< (vm-pc vm) (length (vm-code vm)))
-    (format t "Next instruction: ~A~%" 
-            (instruction-to-string (aref (vm-code vm) (vm-pc vm)))))
-  (format t "---------------~%"))
+(defun vm-step (vm)
+  "Exécute une instruction"
+  (when (and (vm-running vm)
+             (< (vm-pc vm) (length (vm-program vm))))
+    (let ((instr (aref (vm-program vm) (vm-pc vm))))
+      (vm-execute-instruction vm instr)
+      t)))
 
 (defun vm-run (vm)
-  "Lance l'exécution de la VM"
-  (setf (vm-halt vm) nil)
-  (setf (vm-pc vm) 0)
+  "Exécute le programme chargé dans la VM"
+  (loop while (and (vm-running vm)
+                   (< (vm-pc vm) (length (vm-program vm))))
+        do (vm-step vm))
   
-  (loop while (and (not (vm-halt vm))
-                   (< (vm-pc vm) (length (vm-code vm))))
-        do (progn
-             ;; Mode debug: afficher l'état avant chaque instruction
-             (when (vm-debug vm)
-               (vm-print-state vm)
-               (format t "Appuyez sur Entrée pour continuer...")
-               (read-line))
-             
-             ;; Fetch
-             (let ((instruction (aref (vm-code vm) (vm-pc vm))))
-               
-               ;; Decode & Execute
-               (handler-case
-                   (vm-execute-instruction vm instruction)
-                 (error (e)
-                   (format t "~%ERREUR à PC=~A: ~A~%" (vm-pc vm) e)
-                   (vm-print-state vm)
-                   (setf (vm-halt vm) t))))))
-  
-  ;; Retourner le résultat (sommet de pile s'il existe)
+  ;; Retourner la valeur au sommet de la pile si elle existe
   (if (vm-stack vm)
-      (vm-peek vm)
+      (vm-top vm)
       nil))
 
-;;; ----------------------------------------------------------------------------
-;;; Utilitaires pour créer et charger du code
-;;; ----------------------------------------------------------------------------
-
-(defun vm-load-code (vm instructions)
-  "Charge un tableau d'instructions dans la VM"
-  (setf (vm-code vm) (coerce instructions 'vector))
+(defun vm-reset (vm)
+  "Réinitialise la VM"
+  (setf (vm-stack vm) nil)
+  (setf (vm-frames vm) nil)
   (setf (vm-pc vm) 0)
-  (setf (vm-halt vm) nil))
+  (setf (vm-running vm) t))
 
-(defun vm-create-and-run (instructions &key debug)
-  "Crée une VM, charge le code et l'exécute"
-  (let ((vm (make-vm :debug debug)))
-    (vm-load-code vm instructions)
-    (let ((result (vm-run vm)))
-      (format t "~%Résultat: ~A~%" result)
-      result)))
-
-;;; ----------------------------------------------------------------------------
-;;; Export des symboles principaux
-;;; ----------------------------------------------------------------------------
-
-(export '(make-vm vm-run vm-load-code vm-create-and-run
-          vm-push vm-pop vm-peek vm-print-state))
+;;; Utilitaires de debug
+(defun vm-print-state (vm)
+  "Affiche l'état de la VM"
+  (format t "~%=== État de la VM ===~%")
+  (format t "PC: ~A~%" (vm-pc vm))
+  (format t "Running: ~A~%" (vm-running vm))
+  (format t "Stack: ~A~%" (vm-stack vm))
+  (format t "Frames: ~A~%" (length (vm-frames vm)))
+  (when (vm-frames vm)
+    (format t "Current frame vars: ~A~%" 
+            (frame-vars (vm-current-frame vm))))
+  (format t "=====================~%"))
